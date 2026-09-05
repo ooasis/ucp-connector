@@ -1,0 +1,13 @@
+{
+  "id": "bigcommerce-dev",
+  "enabled": true,
+  "merchantName": "UCP BigCommerce Dev Flower Shop",
+  "currency": "USD",
+  "simulationSecret": "super-secret-sim-key",
+  "strictSignatures": false,
+  "adapter": "bigcommerce",
+  "bigcommerceApiBase": "http://localhost:8788",
+  "bigcommerceStoreHash": "devstore",
+  "bigcommerceAccessToken": "mock-token",
+  "bigcommerceWebhookSecret": "bc-webhook-secret"
+}

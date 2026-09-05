@@ -1,0 +1,13 @@
+{
+  "id": "wix-dev",
+  "enabled": true,
+  "merchantName": "UCP Wix Dev Flower Shop",
+  "currency": "USD",
+  "simulationSecret": "super-secret-sim-key",
+  "strictSignatures": false,
+  "adapter": "wix",
+  "wixApiBase": "http://localhost:8789",
+  "wixSiteId": "mock-site",
+  "wixAccessToken": "mock-wix-token",
+  "wixWebhookPublicKey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvXJMkk2eibIvw1DWYSbk\n7COHzVvVmX905rB5mekcfgpUnHaa9wvZREIvFpx+Gr3MaVSjyJ8LLFVNlBOhsECJ\nj82BV7oG0o2XTN7GocEB66pfBW636fNTK81QrfYAIgSn1kElwZ7OntWc15cR0RDo\nUxaYbJrnLpG4NqYLhO0TkUHLjyReViilcKDJxao1efxnfQh7k9NPFLyp3ylpPFY2\n0eC79J4CydFRZbT1tmO1wixAkliPGSV03L4jh2AwXOKZevI9rrTSMcSGNAaiBxd5\nRp8tQIbUMlqYPeaBSvGjxhHu9JdJzApPhnRL+JF92EvCqGguswhuR/xm8GkDqf0/\n3wIDAQAB\n-----END PUBLIC KEY-----\n"
+}

@@ -1,0 +1,57 @@
+{
+  "products": [
+    { "id": "bouquet_roses", "title": "Bouquet of Red Roses", "price": 3500, "stock": 1000 },
+    { "id": "pot_ceramic", "title": "Ceramic Pot", "price": 1500, "stock": 2000 },
+    { "id": "bouquet_sunflowers", "title": "Sunflower Bundle", "price": 2500, "stock": 500 },
+    { "id": "bouquet_tulips", "title": "Spring Tulips", "price": 3000, "stock": 1500 },
+    { "id": "orchid_white", "title": "White Orchid", "price": 4500, "stock": 800 },
+    { "id": "gardenias", "title": "Gardenias", "price": 2000, "stock": 0 }
+  ],
+  "discounts": [
+    { "code": "10OFF", "title": "10% Off", "type": "percentage", "value": 10 },
+    { "code": "WELCOME20", "title": "20% Off", "type": "percentage", "value": 20 },
+    { "code": "FIXED500", "title": "$5.00 Off", "type": "fixed", "value": 500 }
+  ],
+  "customers": [
+    {
+      "name": "John Doe",
+      "email": "john.doe@example.com",
+      "addresses": [
+        {
+          "street_address": "123 Main St",
+          "address_locality": "Springfield",
+          "address_region": "IL",
+          "postal_code": "62704",
+          "address_country": "US"
+        },
+        {
+          "street_address": "456 Oak Ave",
+          "address_locality": "Metropolis",
+          "address_region": "NY",
+          "postal_code": "10012",
+          "address_country": "US"
+        }
+      ]
+    },
+    {
+      "name": "Jane Smith",
+      "email": "jane.smith@example.com",
+      "addresses": [
+        {
+          "street_address": "789 Pine Ln",
+          "address_locality": "Springfield",
+          "address_region": "KS",
+          "postal_code": "66002",
+          "address_country": "US"
+        }
+      ]
+    },
+    { "name": "Jane Doe", "email": "jane.doe@example.com", "addresses": [] }
+  ],
+  "shippingRates": [
+    { "id": "std-ship", "country": "default", "price": 500, "title": "Standard Shipping" },
+    { "id": "exp-ship-us", "country": "US", "price": 1500, "title": "Express Shipping (US)" },
+    { "id": "exp-ship-intl", "country": "default", "price": 2500, "title": "International Express" }
+  ],
+  "freeShipping": { "minSubtotal": 10000, "eligibleItemIds": [] }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "ucp-connector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-tenant UCP/ACP protocol connector (shared TS core for BigCommerce/Wix adapters)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke.ts",
+    "mock:bc": "tsx dev/mock-bigcommerce/server.ts",
+    "mock:wix": "tsx dev/mock-wix/server.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@ucp-js/sdk": "^0.4.6",
+    "better-sqlite3": "^12.2.0",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

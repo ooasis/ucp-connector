@@ -1,0 +1,15 @@
+{
+  "id": "dev",
+  "enabled": true,
+  "merchantName": "UCP Dev Flower Shop",
+  "currency": "USD",
+  "simulationSecret": "super-secret-sim-key",
+  "strictSignatures": false,
+  "stripeSecretKey": "",
+  "stripePublishableKey": "",
+  "stripeApiBase": "https://api.stripe.com",
+  "stripeAccountId": "",
+  "acpWebhookUrl": "",
+  "acpWebhookSecret": "",
+  "adapter": "stub"
+}
