@@ -204,6 +204,12 @@ npm run dev:cf -- --port 8797
 curl http://localhost:8797/wix-dev/.well-known/ucp
 ```
 
+On the `workers.dev` domain Cloudflare's Browser Integrity Check rejects some
+client User-Agents with a 403 "error code: 1010" before the Worker runs
+(observed: `Python-urllib`; `python-httpx`, curl and custom agents pass). Serve
+production traffic from a custom domain on your zone, where that check can be
+disabled or skipped for the connector's paths.
+
 Runtime differences to know: no cross-tenant queries (each tenant is its own
 database), the SSRF guard skips DNS on Workers (the platform refuses fetches to
 private addresses), and Durable Object duration is billed while a request

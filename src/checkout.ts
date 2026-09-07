@@ -188,16 +188,19 @@ async function recalculate(tenant: Tenant, doc: any): Promise<void> {
 
   // Discounts: sequential on the shrinking (subtotal + fulfillment) base.
   let running = subtotal + fulfillmentTotal;
+  let runningItems = subtotal; // for platforms whose coupons never touch shipping (Wix)
   const applied: any[] = [];
   for (const code of doc.discounts?.codes ?? []) {
     const discount = await adapter.validateDiscount(tenant, code);
     if (discount === null) continue; // unknown codes are silently ignored
+    const base = discount.appliesTo === 'items' ? runningItems : running;
     const amount =
       discount.type === 'percentage'
-        ? Math.trunc((running * discount.value) / 100)
-        : Math.min(running, discount.value);
+        ? Math.trunc((base * discount.value) / 100)
+        : Math.min(base, discount.value);
     if (amount <= 0) continue;
     running -= amount;
+    runningItems = Math.max(0, runningItems - amount);
     applied.push({
       code: discount.code,
       title: discount.title,

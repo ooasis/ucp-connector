@@ -48,6 +48,8 @@ export type Discount = {
   type: 'percentage' | 'fixed';
   /** Percent (0-100) or fixed minor units. */
   value: number;
+  /** What the discount is computed on: items subtotal only, or items + fulfillment (default). */
+  appliesTo?: 'items' | 'order';
 };
 
 export interface PlatformAdapter {

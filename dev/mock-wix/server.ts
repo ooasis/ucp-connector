@@ -140,10 +140,11 @@ function reprice(checkout: any): void {
     const spec = coupons.find(
       (cp: any) => cp.specification.code.toLowerCase() === checkout.couponCode.toLowerCase(),
     )?.specification;
+    // Real Wix discounts line items only, never shipping.
     if (spec?.percentOffRate != null) {
-      discount = Math.trunc(((subtotal + shipping) * Number(spec.percentOffRate)) / 100);
+      discount = Math.trunc((subtotal * Number(spec.percentOffRate)) / 100);
     } else if (spec?.moneyOffAmount != null) {
-      discount = Math.min(subtotal + shipping, Math.round(spec.moneyOffAmount * 100));
+      discount = Math.min(subtotal, Math.round(spec.moneyOffAmount * 100));
     }
   }
   const money = (minor: number) => ({ amount: dollars(minor), currency: 'USD' });
@@ -324,16 +325,18 @@ app.get('/ecom/v1/checkouts/:id', (c) => {
 app.patch('/ecom/v1/checkouts/:id', async (c) => {
   const checkout = checkouts.get(c.req.param('id'));
   if (!checkout) return wixError(c, 404, 'Checkout not found', 'NOT_FOUND');
-  const patch = (await c.req.json().catch(() => ({})))?.checkout ?? {};
+  const body = await c.req.json().catch(() => ({}));
+  const patch = body?.checkout ?? {};
   if (patch.buyerInfo) checkout.buyerInfo = { ...checkout.buyerInfo, ...patch.buyerInfo };
   if (patch.billingInfo) checkout.billingInfo = patch.billingInfo;
   if (patch.shippingInfo) checkout.shippingInfo = { ...checkout.shippingInfo, ...patch.shippingInfo };
-  if (patch.couponCode !== undefined) {
+  // Real Wix: couponCode is a request-level field (not inside `checkout`), case-insensitive.
+  if (body?.couponCode !== undefined) {
     const known = coupons.some(
-      (cp: any) => cp.specification.code.toLowerCase() === String(patch.couponCode).toLowerCase(),
+      (cp: any) => cp.specification.code.toLowerCase() === String(body.couponCode).toLowerCase(),
     );
-    if (!known) return wixError(c, 400, `Coupon not found: ${patch.couponCode}`, 'ERROR_COUPON_DOES_NOT_EXIST');
-    checkout.couponCode = patch.couponCode;
+    if (!known) return wixError(c, 400, `Coupon not found: ${body.couponCode}`, 'ERROR_COUPON_DOES_NOT_EXIST');
+    checkout.couponCode = body.couponCode;
   }
   if (checkout.shippingInfo.shippingDestination?.address) {
     checkout.shippingInfo.carrierServiceOptions = carrierServiceOptions(checkout);

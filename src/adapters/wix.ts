@@ -242,9 +242,11 @@ export class WixAdapter implements PlatformAdapter {
     return body.checkout;
   }
 
-  private async updateCheckout(tenant: Tenant, checkoutId: string, patch: any): Promise<any> {
+  /** Update Checkout; `extra` holds request-level fields such as `couponCode` (NOT inside checkout). */
+  private async updateCheckout(tenant: Tenant, checkoutId: string, patch: any, extra: any = {}): Promise<any> {
     const [status, body] = await wix(tenant, 'PATCH', `/ecom/v1/checkouts/${checkoutId}`, {
       checkout: patch,
+      ...extra,
     });
     if (status >= 400 || !body?.checkout) {
       throw new UcpError(502, 'INTERNAL_ERROR', `Wix checkout update failed (HTTP ${status}${wixMessage(body)})`);
@@ -288,11 +290,13 @@ export class WixAdapter implements PlatformAdapter {
       if (spec) break;
     }
     if (!spec || spec.active === false) return null;
+    // Wix coupons discount line items only (verified live: 10% of $35 items +
+    // $5 shipping = $3.50), so the UCP totals are computed on the same base.
     if (spec.percentOffRate != null) {
-      return { code: spec.code, title: spec.name, type: 'percentage', value: Number(spec.percentOffRate) };
+      return { code: spec.code, title: spec.name, type: 'percentage', value: Number(spec.percentOffRate), appliesTo: 'items' };
     }
     if (spec.moneyOffAmount != null) {
-      return { code: spec.code, title: spec.name, type: 'fixed', value: cents(spec.moneyOffAmount) };
+      return { code: spec.code, title: spec.name, type: 'fixed', value: cents(spec.moneyOffAmount), appliesTo: 'items' };
     }
     return null; // freeShipping / fixedPriceAmount coupon types not supported
   }
@@ -340,8 +344,8 @@ export class WixAdapter implements PlatformAdapter {
     const buyerPatch = {
       buyerInfo: doc.buyer?.email ? { email: doc.buyer.email } : undefined,
       billingInfo: { address, contactDetails: contact },
-      couponCode: applied[0]?.code,
     };
+    const coupon = applied[0]?.code ? { couponCode: applied[0].code } : {};
     const pickOption = (checkout: any) => {
       const available = carrierOptions(checkout).sort((a, b) => a.amount - b.amount);
       return (
@@ -362,13 +366,18 @@ export class WixAdapter implements PlatformAdapter {
         const [, current] = await wix(tenant, 'GET', `/ecom/v1/checkouts/${quoted.id}`);
         const option = current?.checkout && !current.checkout.completed ? pickOption(current.checkout) : null;
         if (option) {
-          await this.updateCheckout(tenant, quoted.id, {
-            ...buyerPatch,
-            shippingInfo: {
-              shippingDestination: { address, contactDetails: contact },
-              selectedCarrierServiceOption: { code: option.id, title: option.title },
+          await this.updateCheckout(
+            tenant,
+            quoted.id,
+            {
+              ...buyerPatch,
+              shippingInfo: {
+                shippingDestination: { address, contactDetails: contact },
+                selectedCarrierServiceOption: { code: option.id, title: option.title },
+              },
             },
-          });
+            coupon,
+          );
           checkoutId = quoted.id;
         }
       } catch {
@@ -377,10 +386,12 @@ export class WixAdapter implements PlatformAdapter {
     }
     if (!checkoutId) {
       const checkout = await this.createCheckout(tenant, items);
-      const withDest = await this.updateCheckout(tenant, checkout.id, {
-        ...buyerPatch,
-        shippingInfo: { shippingDestination: { address, contactDetails: contact } },
-      });
+      const withDest = await this.updateCheckout(
+        tenant,
+        checkout.id,
+        { ...buyerPatch, shippingInfo: { shippingDestination: { address, contactDetails: contact } } },
+        coupon,
+      );
       const option = pickOption(withDest);
       if (option) {
         await this.updateCheckout(tenant, checkout.id, {

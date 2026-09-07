@@ -5,6 +5,35 @@ Wix (each against a local mock) verified: conformance GREEN on ALL THREE
 tenants — 75 passed / 2 skipped each (identical bar to Magento). BigCommerce
 AND Wix plan phase 5 (app shells) built and verified against the mocks (below).*
 
+## Cloudflare cut-over + coupon fix (2026-09-07, uncommitted)
+
+- User repointed the Wix Dev Center URLs to `https://ucp-connector.videoss.
+  workers.dev` and reopened the app: tenant object created on Cloudflare
+  (profile 200, google_pay advertised — Stripe key re-entered; no simulation
+  secret on the CF tenant). Real flow through the Worker: create -> option ->
+  Stripe `tok_visa` complete -> Wix order -> `create-fulfillment` (API) ->
+  `fulfillments_updated` webhook delivered to the Worker -> `shipped` event
+  on the UCP order. Placeholder payment VOIDED, Stripe payment APPROVED.
+- Gotcha: Cloudflare's Browser Integrity Check on workers.dev returns 403
+  `error code: 1010` for some User-Agents before the Worker runs
+  (`Python-urllib` blocked; `python-httpx`, curl, custom agents pass). Use a
+  custom domain for production and disable/skip the check there.
+- **Coupon bug found live**: order #10007 came out PARTIALLY_PAID (Wix total
+  $40.00 vs $36.00 charged). Two causes: (1) Update Checkout takes
+  `couponCode` as a REQUEST-level field, not inside `checkout` — the adapter
+  (and the mock) had it inside, so Wix silently ignored it; (2) Wix coupons
+  discount line items only, never shipping (10% of $35 = $3.50), while the
+  UCP core discounted subtotal + fulfillment. Fix: `Discount.appliesTo:
+  'items' | 'order'` (checkout.ts tracks an items-only running base; Wix
+  returns 'items', stub/BigCommerce keep 'order'); `updateCheckout(...,
+  extra)` passes `{ couponCode }` at request level; mock mirrors both.
+  Verified: order **#10008** via Cloudflare with `10off`: UCP total 3650 =
+  Wix total $36.50 (coupon 10OFF applied), PAID, Stripe payment $36.50
+  APPROVED, placeholder VOIDED. Mock conformance vs wix-dev 75/2, smokes
+  green. #10007 stays PARTIALLY_PAID on the dev site (cancel or mark paid).
+- Completion latency through the Worker: 5.5 s with Stripe (2 Stripe calls +
+  3 Wix calls); create 2–6 s (first request after idle is slower).
+
 ## Cloudflare port (2026-09-07, uncommitted)
 
 - One codebase, two entries. `src/app.ts` is the shared Hono app; `src/index.ts`
