@@ -204,6 +204,10 @@ curl http://localhost:8787/site-1/.well-known/ucp
 npm run smoke:wix-install   # 13-step install/dashboard/settings/checkout/remove/reinstall check
 ```
 
+Item ids on Wix sites are Catalog V3 product ids, or `productId:variantId` for a
+specific variant; sites still on Catalog V1 are detected (HTTP 428) and served
+through the V1 product API.
+
 The merchant-domain `/.well-known/ucp` is not solved by the app: Wix cannot
 serve root files, so the dashboard tells the merchant to front the site
 (Cloudflare Worker or proxy rule) and reports whether that is live.

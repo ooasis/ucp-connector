@@ -32,7 +32,7 @@ import {
   type SettingsRow,
 } from './app-settings.js';
 import { orderIdByPlatformRef } from './db.js';
-import { markShipped, pushOrderUpdated } from './orders.js';
+import { loadOrder, markShipped, pushOrderUpdated } from './orders.js';
 import { isPublicUrl } from './profile.js';
 import { loadTenantConfig, tenantFor, upsertTenant, type Tenant } from './tenants.js';
 
@@ -87,14 +87,34 @@ export async function installInstance(c: Context, instanceId: string): Promise<T
 
 export type WixEvent = { eventType: string; instanceId?: string; entityId?: string; data: any };
 
-/** eCom order/fulfillment events -> UCP order webhooks (shared with the per-tenant route). */
+/**
+ * eCom order/fulfillment events -> UCP order webhooks (shared with the
+ * per-tenant route). Real Wix payloads (verified 2026-09-07): the inner
+ * `data` carries `entityId` (= order id for both `wix.ecom.v1.order` and
+ * `wix.ecom.v1.fulfillments` entities) plus `updatedEvent.currentEntity` /
+ * `actionEvent.body.order`; the fulfillment event is
+ * `wix.ecom.v1.fulfillments_updated` (also on creation).
+ */
 export async function handleWixEcomEvent(tenant: Tenant, event: WixEvent): Promise<void> {
-  // Fulfillment events carry the order id as data.orderId; order events as entityId.
-  const ref = String(event.data?.orderId ?? event.entityId ?? '');
+  const data = event.data ?? {};
+  const ref = String(
+    data.entityId ??
+      data.orderId ??
+      data.updatedEvent?.currentEntity?.orderId ??
+      data.updatedEvent?.currentEntity?.id ??
+      data.actionEvent?.body?.order?.id ??
+      event.entityId ??
+      '',
+  );
   const orderUuid = orderIdByPlatformRef(tenant.id, ref);
   if (!orderUuid) return;
-  if (event.eventType.includes('fulfillment_created')) await markShipped(tenant, orderUuid);
-  else if (/order_(updated|approved)/.test(event.eventType)) await pushOrderUpdated(tenant, orderUuid);
+  if (/fulfillment/.test(event.eventType)) {
+    // Wix re-sends fulfillments_updated on every change; ship once.
+    const shipped = loadOrder(tenant, orderUuid).fulfillment?.events?.some((e: any) => e.type === 'shipped');
+    if (!shipped) await markShipped(tenant, orderUuid);
+  } else if (/order_(updated|approved)/.test(event.eventType)) {
+    await pushOrderUpdated(tenant, orderUuid);
+  }
 }
 
 // -- .well-known status --------------------------------------------------------------------

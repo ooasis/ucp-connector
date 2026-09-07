@@ -215,13 +215,16 @@ try {
   ok(`checkout on the instance with a client_credentials token: order ${done.order.id}`);
 
   const wixOrders = (await fetch(`${MOCK}/_orders`).then((r) => (r.json() as Promise<any>))) as any[];
-  const placed = wixOrders.find((o) => o.checkoutId && o.paymentStatus === 'PAID' && o.buyerInfo?.email === 'smoke@example.com');
+  // Mock state outlives smoke runs: take the newest PAID order for this buyer.
+  const placed = [...wixOrders].reverse().find((o) => o.paymentStatus === 'PAID' && o.buyerInfo?.email === 'smoke@example.com');
   assert.ok(placed, 'Wix order PAID');
-  delivered = await emit('wix.ecom.v1.fulfillment_created', { orderId: placed.id });
+  delivered = await emit('wix.ecom.v1.fulfillments_updated', { orderId: placed.id });
   assert.equal(delivered.delivered, 200);
-  const entity = await fetch(`${base}/ucp/orders/${done.order.id}`).then((r) => (r.json() as Promise<any>));
-  assert.ok((entity.fulfillment?.events ?? []).some((e: any) => e.type === 'shipped'));
-  ok('fulfillment webhook via the app-level sink -> shipped event on the UCP order');
+  await emit('wix.ecom.v1.fulfillments_updated', { orderId: placed.id }); // Wix re-sends on every change
+  const entity = await (fetch(`${base}/ucp/orders/${done.order.id}`).then((r) => (r.json() as Promise<any>)));
+  const shippedEvents = (entity.fulfillment?.events ?? []).filter((e: any) => e.type === 'shipped');
+  assert.equal(shippedEvents.length, 1, 'exactly one shipped event despite repeated fulfillment webhooks');
+  ok('fulfillments_updated webhook (real shape) via the app-level sink -> one shipped event');
 
   // -- remove / reinstall ---------------------------------------------------------------------
   await emit('AppRemoved');

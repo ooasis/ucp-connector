@@ -5,6 +5,66 @@ Wix (each against a local mock) verified: conformance GREEN on ALL THREE
 tenants — 75 passed / 2 skipped each (identical bar to Magento). BigCommerce
 AND Wix plan phase 5 (app shells) built and verified against the mocks (below).*
 
+## Wix — verified on a REAL dev site (2026-09-07, uncommitted)
+
+The user created a Wix dev site ("UCP Store", Catalog V3, template products)
+and a self-hosted app in the Developer Center; connector run via `npm run
+start:env` (new `.env` support) behind an ngrok tunnel.
+
+- **Install flow works on real Wix**: App Instance Installed webhook hit
+  `/wix/webhooks` (signature verified with the app public key), tenant
+  `e94796f9-…` created with siteId + name from `GET /apps/v1/instance`
+  (client_credentials token works, 5 permissions). Dashboard page loaded
+  inside manage.wix.com with a valid signed `instance` param (Wix also
+  appends `authorizationCode`, `siteInfo`, `essentials` query params —
+  ignored). Unpublished dev site -> no site URL -> dashboard status row says
+  "site URL unknown".
+- **Spike S2 answers (fixes applied)**:
+  - Sites run **Catalog V3**: `/stores/v1/products/{id}` -> 428
+    `CATALOG_V3_CALLING_CATALOG_V1_API`. Adapter now uses
+    `GET /stores/v3/products/{id}` (price from
+    `variantsInfo.variants[].price.actualPrice.amount`, stock from
+    `POST /stores/v3/inventory-items/query` quantity/trackQuantity, else
+    `inventoryStatus.inStock`), falls back to V1 per site on 428. Item id =
+    V3 product id, or `productId:variantId` -> `catalogReference.options.
+    variantId`. A product without options needs no variantId.
+  - Coupons: `/stores/v1/coupons/query` -> 404; **`/stores/v2/coupons/query`**
+    works (same body).
+  - eCom Update Checkout rejects an EMPTY `contactDetails.phone` ("is not a
+    valid phone number"): contact fields are now only sent when non-empty.
+    Adapter errors now carry Wix's message.
+  - Add Payments path is **`/ecom/v1/payments/orders/{id}/add-payment`**
+    (singular); the mock had `/payments`. Fixed both.
+  - Carrier quoting on a checkout with a shippingDestination works
+    (returned the site's "Free shipping" option).
+- **Real order placed via UCP**: create (V3 product $270) -> carrier option
+  -> complete with the mock handler (test mode) -> Wix order **#10001**,
+  `paymentStatus: PAID`, channel `OTHER_PLATFORM`, payment recorded through
+  Add Payments. (One earlier attempt left an orphan NOT_PAID order in Wix
+  from the add-payment 404 — cancel it in the dashboard.)
+- Mock conformance vs `wix-dev` after the adapter change: 75 passed / 2
+  skipped; `smoke:wix-install` 13/13 with the mock's new V3 endpoints.
+- **Real webhooks decoded** (via the tunnel): Wix sends
+  `wix.ecom.v1.order_updated` (many times per order), `order_approved`, and
+  for fulfillments **`wix.ecom.v1.fulfillments_updated`** (also on creation;
+  there is no separate *_created delivery). The inner `data` object carries
+  `entityId` (= order id for both the order and fulfillments entities),
+  `entityFqdn`, `slug`, and `updatedEvent.currentEntity` /
+  `actionEvent.body.order`; there is NO event-level `entityId`.
+  `handleWixEcomEvent` now resolves the order from those paths, matches
+  `/fulfillment/`, and ships once (guards against the re-sent updates). Mock
+  `/_emit-webhook` now emits the real shapes.
+- **Real fulfillment round-trip**: second UCP order -> Wix order **#10002**
+  PAID -> `create-fulfillment` with tracking (API) -> `fulfillments_updated`
+  hit `/wix/webhooks` -> UCP order shows a `shipped` event within 20 s.
+  Plan phase 4 verify (paid order + fulfillment event) is met on real Wix,
+  with the mock handler standing in for Stripe.
+- Still open: spike S1 (`.well-known` fronting on a published site), Stripe
+  google_pay on a real Stripe test account, conformance suite against the
+  real site (needs the flower-shop fixtures created there), App Instance
+  Installed/Removed slugs confirmed only by effect (the install created the
+  tenant) — decode one from the tunnel log to pin the string.
+
 ## Wix app shell (plan phase 5, 2026-09-06, uncommitted)
 
 - Wix's current model (custom OAuth is deprecated for new apps): no redirect

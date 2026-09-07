@@ -1,6 +1,7 @@
 /**
  * Mock Wix API for local dev of the Wix adapter — covers exactly the endpoints
- * the adapter calls (Stores products/coupons, Contacts V4, eCom Cart V2
+ * the adapter calls (Stores Catalog V3 products + inventory, Catalog V1
+ * products for the fallback path, Coupons V2, Contacts V4, eCom Cart V2
  * checkouts / Create Order From Checkout / Order Transactions Add Payments),
  * with response shapes per the Wix docs cited in wix/PLAN.md. Seeded from
  * config/fixtures.json (flower shop), so the wix-dev tenant behaves exactly
@@ -211,7 +212,52 @@ app.get('/stores/v1/products/:id', (c) => {
   return c.json({ product: p });
 });
 
-app.post('/stores/v1/coupons/query', async (c) => {
+// Catalog V3 (what current sites run): one default variant per fixture product.
+app.get('/stores/v3/products/:id', (c) => {
+  const p = products.get(c.req.param('id'));
+  if (!p) return wixError(c, 404, 'Product not found', 'NOT_FOUND');
+  const amount = p.priceData.price.toFixed(2);
+  return c.json({
+    product: {
+      id: p.id,
+      name: p.name,
+      productType: 'PHYSICAL',
+      actualPriceRange: { minValue: { amount }, maxValue: { amount } },
+      variantsInfo: {
+        variants: [
+          {
+            id: `${p.id}-default`,
+            sku: p.id,
+            choices: [],
+            price: { actualPrice: { amount } },
+            inventoryStatus: { inStock: !p.stock.trackInventory || (p.stock.quantity ?? 0) > 0 },
+          },
+        ],
+      },
+    },
+  });
+});
+
+app.post('/stores/v3/inventory-items/query', async (c) => {
+  const filter = (await c.req.json().catch(() => ({})))?.query?.filter ?? {};
+  const p = products.get(String(filter.productId ?? ''));
+  if (!p) return c.json({ inventoryItems: [] });
+  return c.json({
+    inventoryItems: [
+      {
+        id: `inv-${p.id}`,
+        productId: p.id,
+        variantId: `${p.id}-default`,
+        trackQuantity: p.stock.trackInventory,
+        quantity: p.stock.trackInventory ? (p.stock.quantity ?? 0) : undefined,
+        inStock: !p.stock.trackInventory || (p.stock.quantity ?? 0) > 0,
+        availabilityStatus: !p.stock.trackInventory || (p.stock.quantity ?? 0) > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
+      },
+    ],
+  });
+});
+
+app.post('/stores/v2/coupons/query', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const filter = JSON.parse(body?.query?.filter ?? '{}');
   const out = filter.code
@@ -320,7 +366,7 @@ app.post('/ecom/v1/checkouts/:id/create-order', (c) => {
 
 // -- Order Transactions: Add Payments ---------------------------------------------------
 
-app.post('/ecom/v1/payments/orders/:id/payments', async (c) => {
+app.post('/ecom/v1/payments/orders/:id/add-payment', async (c) => {
   const order = orders.get(c.req.param('id'));
   if (!order) return wixError(c, 404, 'Order not found', 'NOT_FOUND');
   const payments = (await c.req.json().catch(() => ({})))?.payments ?? [];
@@ -381,7 +427,7 @@ function webhookJwt(eventType: string, entityId: string, data: any, instanceId =
 // Wix would. App lifecycle events (AppInstalled / AppRemoved) need no orderId.
 app.post('/_emit-webhook', async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const eventType = body.eventType ?? 'wix.ecom.v1.fulfillment_created';
+  const eventType = body.eventType ?? 'wix.ecom.v1.fulfillments_updated';
   const instanceId = body.instanceId ?? 'mock-instance';
   if (!body.url) return c.json({ error: 'url is required' }, 400);
   let jwt: string;
@@ -390,9 +436,27 @@ app.post('/_emit-webhook', async (c) => {
   } else {
     const order = orders.get(String(body.orderId ?? ''));
     if (!order) return c.json({ error: 'a known orderId is required' }, 400);
+    // Real Wix shapes: inner data carries entityId (= order id) + updatedEvent.currentEntity.
     const data = eventType.includes('fulfillment')
-      ? { orderId: order.id, fulfillment: { trackingInfo: { trackingNumber: 'MOCK123', shippingProvider: 'usps' } } }
-      : { order };
+      ? {
+          id: randomUUID(),
+          entityFqdn: 'wix.ecom.v1.fulfillments',
+          slug: 'updated',
+          entityId: order.id,
+          updatedEvent: {
+            currentEntity: {
+              orderId: order.id,
+              fulfillments: [
+                {
+                  id: randomUUID(),
+                  lineItems: order.lineItems.map((li: any) => ({ id: li.id, quantity: li.quantity })),
+                  trackingInfo: { trackingNumber: 'MOCK123', shippingProvider: 'usps' },
+                },
+              ],
+            },
+          },
+        }
+      : { id: randomUUID(), entityFqdn: 'wix.ecom.v1.order', slug: eventType.split('_').pop(), entityId: order.id, updatedEvent: { currentEntity: order } };
     jwt = webhookJwt(eventType, order.id, data, instanceId);
   }
   const res = await fetch(body.url, {

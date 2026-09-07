@@ -6,8 +6,11 @@
  * Order Transactions Add Payments (dedupes on provider transaction id;
  * paymentStatus recalculates async, so we poll before returning).
  *
- * Catalog via Wix Stores Get Product, coupons via Coupons Query, known buyers
- * via Contacts Query. Tenant config: wixApiBase (mock override), wixSiteId,
+ * Catalog via Wix Stores Catalog V3 Get Product (+ Inventory Items V3 for
+ * quantities), falling back to Catalog V1 on sites that still run it (Wix
+ * answers 428 CATALOG_V3_CALLING_CATALOG_V1_API and vice versa); item ids are
+ * V3 product ids, optionally `productId:variantId` for a specific variant.
+ * Coupons via Coupons V2 Query, known buyers via Contacts Query. Tenant config: wixApiBase (mock override), wixSiteId,
  * wixWebhookPublicKey (per-tenant inbound webhook key, dev/legacy) and either
  * wixInstanceId (app instance: 4 h client_credentials tokens under
  * WIX_APP_ID/WIX_APP_SECRET, cached here) or a static wixAccessToken.
@@ -108,13 +111,20 @@ function wixAddress(dest: Destination): any {
   };
 }
 
+/** Wix validates phone format even when empty: send only the fields we have. */
 function contactDetails(dest: Destination, buyer?: any): any {
-  return {
-    firstName: buyer?.first_name ?? dest.first_name ?? '',
-    lastName: buyer?.last_name ?? dest.last_name ?? '',
-    phone: buyer?.phone_number ?? dest.phone_number ?? '',
-  };
+  const out: Record<string, string> = {};
+  const first = buyer?.first_name ?? dest.first_name;
+  const last = buyer?.last_name ?? dest.last_name;
+  const phone = buyer?.phone_number ?? dest.phone_number;
+  if (first) out.firstName = first;
+  if (last) out.lastName = last;
+  if (phone) out.phone = phone;
+  return out;
 }
+
+/** Wix error message (validation errors carry the field path) for diagnostics. */
+const wixMessage = (body: any): string => (body?.message ? `: ${String(body.message).split('\n')[0]}` : '');
 
 /** Flatten checkout.shippingInfo.carrierServiceOptions to UCP shipping options. */
 function carrierOptions(checkout: any): ShippingOption[] {
@@ -127,8 +137,24 @@ function carrierOptions(checkout: any): ShippingOption[] {
   return out;
 }
 
+/** Sites that answered 428 to a V3 call: use Catalog V1 for them from then on. */
+const catalogV1Sites = new Set<string>();
+
+/** `productId` or `productId:variantId` -> catalogReference for eCom line items. */
+function catalogReference(itemId: string): any {
+  const [catalogItemId, variantId] = itemId.split(':');
+  return variantId
+    ? { appId: WIX_STORES_APP_ID, catalogItemId, options: { variantId } }
+    : { appId: WIX_STORES_APP_ID, catalogItemId };
+}
+
 export class WixAdapter implements PlatformAdapter {
   async getItem(tenant: Tenant, itemId: string): Promise<CatalogItem | null> {
+    if (!catalogV1Sites.has(tenant.id)) {
+      const v3 = await this.getItemV3(tenant, itemId);
+      if (v3 !== 'v1') return v3;
+      catalogV1Sites.add(tenant.id);
+    }
     const [status, body] = await wix(
       tenant,
       'GET',
@@ -147,17 +173,45 @@ export class WixAdapter implements PlatformAdapter {
     };
   }
 
+  /** Catalog V3: variant price + inventory quantity; 'v1' when the site is on Catalog V1. */
+  private async getItemV3(tenant: Tenant, itemId: string): Promise<CatalogItem | null | 'v1'> {
+    const [productId, variantId] = itemId.split(':');
+    const [status, body] = await wix(
+      tenant,
+      'GET',
+      `/stores/v3/products/${encodeURIComponent(productId)}`,
+    );
+    if (status === 428) return 'v1';
+    if (status === 404) return null;
+    const p = body?.product;
+    if (status >= 400 || !p) {
+      throw new UcpError(502, 'INTERNAL_ERROR', `Wix catalog lookup failed (HTTP ${status})`);
+    }
+    const variants: any[] = p.variantsInfo?.variants ?? [];
+    const variant = variantId ? variants.find((v) => v.id === variantId) : variants[0];
+    if (!variant) return null;
+    let stock: number | null = variant.inventoryStatus?.inStock === false ? 0 : null;
+    const [is, inv] = await wix(tenant, 'POST', '/stores/v3/inventory-items/query', {
+      query: { filter: { productId, variantId: variant.id }, cursorPaging: { limit: 1 } },
+    });
+    const item = is < 400 ? inv?.inventoryItems?.[0] : null;
+    if (item?.trackQuantity) stock = Number(item.quantity ?? 0);
+    return {
+      id: itemId,
+      title: p.name,
+      price: cents(variant.price?.actualPrice?.amount ?? p.actualPriceRange?.minValue?.amount),
+      stock,
+    };
+  }
+
   /** Create a Cart V2 checkout with the line items (channelType required). */
   private async createCheckout(tenant: Tenant, items: CartLine[]): Promise<any> {
     const [status, body] = await wix(tenant, 'POST', '/ecom/v1/checkouts', {
       channelType: 'OTHER_PLATFORM',
-      lineItems: items.map((i) => ({
-        quantity: i.quantity,
-        catalogReference: { appId: WIX_STORES_APP_ID, catalogItemId: i.id },
-      })),
+      lineItems: items.map((i) => ({ quantity: i.quantity, catalogReference: catalogReference(i.id) })),
     });
     if (status >= 400 || !body?.checkout?.id) {
-      throw new UcpError(502, 'INTERNAL_ERROR', `Wix checkout creation failed (HTTP ${status})`);
+      throw new UcpError(502, 'INTERNAL_ERROR', `Wix checkout creation failed (HTTP ${status}${wixMessage(body)})`);
     }
     return body.checkout;
   }
@@ -167,7 +221,7 @@ export class WixAdapter implements PlatformAdapter {
       checkout: patch,
     });
     if (status >= 400 || !body?.checkout) {
-      throw new UcpError(502, 'INTERNAL_ERROR', `Wix checkout update failed (HTTP ${status})`);
+      throw new UcpError(502, 'INTERNAL_ERROR', `Wix checkout update failed (HTTP ${status}${wixMessage(body)})`);
     }
     return body.checkout;
   }
@@ -196,7 +250,7 @@ export class WixAdapter implements PlatformAdapter {
   }
 
   async validateDiscount(tenant: Tenant, code: string): Promise<Discount | null> {
-    const [status, body] = await wix(tenant, 'POST', '/stores/v1/coupons/query', {
+    const [status, body] = await wix(tenant, 'POST', '/stores/v2/coupons/query', {
       query: { filter: JSON.stringify({ code }) },
     });
     if (status >= 400) return null;
@@ -278,12 +332,12 @@ export class WixAdapter implements PlatformAdapter {
     const [os, order] = await wix(tenant, 'POST', `/ecom/v1/checkouts/${checkout.id}/create-order`);
     const orderId = order?.orderId;
     if (os >= 400 || !orderId) {
-      throw new UcpError(502, 'INTERNAL_ERROR', `Wix order creation failed (HTTP ${os})`);
+      throw new UcpError(502, 'INTERNAL_ERROR', `Wix order creation failed (HTTP ${os}${wixMessage(order)})`);
     }
 
     // Record the external (Stripe) charge. Duplicate providerTransactionId
     // fails the whole call — exactly the dedupe we want on retries.
-    const [ps] = await wix(tenant, 'POST', `/ecom/v1/payments/orders/${orderId}/payments`, {
+    const [ps, pay] = await wix(tenant, 'POST', `/ecom/v1/payments/orders/${orderId}/add-payment`, {
       payments: [
         {
           amount: { amount: dollars(totalOf(doc.totals)) },
@@ -297,7 +351,7 @@ export class WixAdapter implements PlatformAdapter {
       ],
     });
     if (ps >= 400) {
-      throw new UcpError(502, 'INTERNAL_ERROR', `Wix add-payments failed (HTTP ${ps})`);
+      throw new UcpError(502, 'INTERNAL_ERROR', `Wix add-payments failed (HTTP ${ps}${wixMessage(pay)})`);
     }
 
     // paymentStatus recalculates async — poll until PAID before reporting.
