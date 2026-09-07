@@ -49,6 +49,7 @@ a `PlatformAdapter` interface.
 ```bash
 npm install
 npm run dev        # tsx watch, http://localhost:8787
+npm run start:env  # same as start, loading credentials from .env (copy .env.example)
 npm run typecheck  # tsc --noEmit
 npm run smoke      # self-contained e2e: boots on an ephemeral port + throwaway DB
 ```
