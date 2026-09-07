@@ -8,10 +8,12 @@
  * in the app dashboard (not by API), all pointing at ONE URL:
  *
  *   POST /wix/webhooks             app-level webhook sink (JWT signed with the
- *                                  app public key): AppInstalled -> tenant
- *                                  upsert (id = instanceId), AppRemoved ->
- *                                  disable, eCom order/fulfillment events ->
- *                                  signed UCP order webhooks
+ *                                  app public key). Event names as Wix sends
+ *                                  them (verified live): `AppInstalled` ->
+ *                                  tenant upsert (id = instanceId),
+ *                                  `AppRemoved` -> disable, `wix.ecom.v1.*`
+ *                                  order/fulfillment events -> signed UCP
+ *                                  order webhooks
  *   GET  /wix/dashboard?instance=  dashboard page (signed instance) -> settings
  *   POST /wix/settings             settings form (session token from /dashboard)
  *
@@ -163,9 +165,10 @@ wixApp.post('/webhooks', async (c: Context) => {
   const event = pem ? verifyWixWebhookJwt(pem, await c.req.text()) : null;
   if (!event?.instanceId) return c.json({ error: 'forbidden' }, 403);
   const type = event.eventType;
-  if (/AppInstalled|app_instance_installed|app_installed/i.test(type)) {
+  console.log(`wix webhook ${type} instance=${event.instanceId}`);
+  if (type === 'AppInstalled') {
     await installInstance(c, event.instanceId);
-  } else if (/AppRemoved|app_instance_removed|app_removed/i.test(type)) {
+  } else if (type === 'AppRemoved') {
     if (loadTenantConfig(event.instanceId)) upsertTenant(event.instanceId, { enabled: false });
   } else {
     const tenant = tenantFor(c, event.instanceId);

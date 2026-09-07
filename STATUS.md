@@ -61,9 +61,11 @@ start:env` (new `.env` support) behind an ngrok tunnel.
   with the mock handler standing in for Stripe.
 - Still open: spike S1 (`.well-known` fronting on a published site), Stripe
   google_pay on a real Stripe test account, conformance suite against the
-  real site (needs the flower-shop fixtures created there), App Instance
-  Installed/Removed slugs confirmed only by effect (the install created the
-  tenant) — decode one from the tunnel log to pin the string.
+  real site (needs the flower-shop fixtures created there).
+- App lifecycle event names pinned from a live remove + reinstall
+  (2026-09-07): exactly `AppRemoved` and `AppInstalled` (no `wix.` prefix);
+  the same instanceId is reused on reinstall and the tenant is re-enabled with
+  its settings intact. The sink logs every event type (`wix webhook <type>`).
 
 ## Wix app shell (plan phase 5, 2026-09-06, uncommitted)
 
