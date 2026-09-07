@@ -16,8 +16,14 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import { html, raw } from 'hono/html';
 import { bc } from './adapters/bigcommerce.js';
+import {
+  sessionToken,
+  settingsFromForm,
+  settingsPage,
+  verifySessionToken,
+  type SettingsRow,
+} from './app-settings.js';
 import { businessProfile } from './profile.js';
 import { loadTenantConfig, tenantFor, upsertTenant, type Tenant } from './tenants.js';
 
@@ -30,16 +36,13 @@ const WEBHOOK_SCOPES = ['store/order/statusUpdated', 'store/shipment/created'];
 
 // -- signed payloads -------------------------------------------------------------
 
-function hmacEqual(secret: string, data: string, given: Buffer): boolean {
-  const expected = createHmac('sha256', secret).update(data).digest();
-  return expected.length === given.length && timingSafeEqual(expected, given);
-}
-
 /** BigCommerce load/uninstall `signed_payload_jwt` (HS256 with the client secret). */
 export function verifySignedPayloadJwt(token: string): { storeHash: string; user: any } | null {
   const [h, p, s] = token.split('.');
   if (!h || !p || !s) return null;
-  if (!hmacEqual(env('BC_CLIENT_SECRET'), `${h}.${p}`, Buffer.from(s, 'base64url'))) return null;
+  const expected = createHmac('sha256', env('BC_CLIENT_SECRET')).update(`${h}.${p}`).digest();
+  const given = Buffer.from(s, 'base64url');
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
   let claims: any;
   try {
     claims = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'));
@@ -50,21 +53,6 @@ export function verifySignedPayloadJwt(token: string): { storeHash: string; user
   if (typeof claims.exp === 'number' && claims.exp < Date.now() / 1000) return null;
   const m = /^stores\/([A-Za-z0-9]+)$/.exec(String(claims.sub ?? ''));
   return m ? { storeHash: m[1], user: claims.user } : null;
-}
-
-/** Short-lived token authorizing the settings form for one store (1 h). */
-function sessionToken(storeHash: string): string {
-  const exp = Math.floor(Date.now() / 1000) + 3600;
-  const data = `${storeHash}.${exp}`;
-  return `${data}.${createHmac('sha256', env('BC_CLIENT_SECRET')).update(data).digest('base64url')}`;
-}
-
-function verifySessionToken(token: string): string | null {
-  const [hash, exp, sig] = token.split('.');
-  if (!hash || !exp || !sig || Number(exp) < Date.now() / 1000) return null;
-  return hmacEqual(env('BC_CLIENT_SECRET'), `${hash}.${exp}`, Buffer.from(sig, 'base64url'))
-    ? hash
-    : null;
 }
 
 // -- provisioning on the store -----------------------------------------------------
@@ -130,50 +118,14 @@ async function provision(tenant: Tenant): Promise<Provision> {
   return out;
 }
 
-// -- settings page -------------------------------------------------------------------
-
-const mask = (secret: string) => (secret ? `configured (…${secret.slice(-4)})` : 'not set');
-
-function settingsPage(tenant: Tenant, token: string, notice: string, provisioned: Provision | null) {
-  const cfg = tenant.config;
-  const checked = (on: boolean) => (on ? raw('checked') : '');
-  return html`<!doctype html>
-<title>UCP Agent · ${cfg.merchantName}</title>
-<style>
-  body{font:14px/1.5 system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:0 1rem;color:#222}
-  label{display:block;margin:.8rem 0 .2rem;font-weight:600} input[type=text],input[type=password]{width:100%;padding:.4rem}
-  code{background:#f3f3f3;padding:.1rem .3rem} .notice{background:#e8f5e9;padding:.6rem 1rem;border-radius:4px}
-  table{border-collapse:collapse} td{padding:.2rem .8rem .2rem 0;vertical-align:top}
-</style>
-<h1>UCP Agent</h1>
-<p>Store <code>${tenant.id}</code> · ${cfg.merchantName} · ${cfg.currency}</p>
-${notice ? html`<p class="notice">${notice}</p>` : ''}
-<table>
-  <tr><td>UCP endpoint</td><td><code>${tenant.baseUrl}/ucp</code></td></tr>
-  <tr><td>Hosted profile</td><td><a href="${tenant.baseUrl}/.well-known/ucp">${tenant.baseUrl}/.well-known/ucp</a></td></tr>
-  <tr><td>Storefront profile</td><td><code>${cfg.bigcommerceStorefrontUrl}${PROFILE_PAGE_PATH}</code></td></tr>
-  ${
-    provisioned
-      ? html`<tr><td>Webhooks</td><td>${provisioned.webhooks}</td></tr>
-  <tr><td>Profile page</td><td>${provisioned.profile}</td></tr>`
-      : ''
-  }
-  <tr><td>Payment handlers</td><td>${cfg.stripeSecretKey ? 'google_pay (Stripe)' : 'none'}${cfg.simulationSecret ? ', mock (test mode)' : ''}</td></tr>
-</table>
-<form method="post" action="settings">
-  <input type="hidden" name="token" value="${token}">
-  <label><input type="checkbox" name="enabled" ${checked(cfg.enabled)}> Enable UCP endpoints</label>
-  <label><input type="checkbox" name="strictSignatures" ${checked(cfg.strictSignatures)}> Require signed requests (RFC 9421)</label>
-  <label>Stripe secret key <small>(${mask(cfg.stripeSecretKey)}; blank keeps)</small></label>
-  <input type="password" name="stripeSecretKey" autocomplete="off">
-  <label><input type="checkbox" name="clearStripe"> Clear Stripe keys</label>
-  <label>Stripe publishable key</label>
-  <input type="text" name="stripePublishableKey" value="${cfg.stripePublishableKey}">
-  <label>Simulation secret <small>(${mask(cfg.simulationSecret)}; test mode, blank keeps)</small></label>
-  <input type="password" name="simulationSecret" autocomplete="off">
-  <label><input type="checkbox" name="clearSimulation"> Clear simulation secret</label>
-  <p><button type="submit">Save</button></p>
-</form>`;
+function page(c: Context, tenant: Tenant, notice: string, provisioned: Provision | null) {
+  const rows: SettingsRow[] = [
+    ['Storefront profile', `${tenant.config.bigcommerceStorefrontUrl}${PROFILE_PAGE_PATH}`],
+  ];
+  if (provisioned) rows.push(['Webhooks', provisioned.webhooks], ['Profile page', provisioned.profile]);
+  return c.html(
+    settingsPage({ tenant, token: sessionToken(env('BC_CLIENT_SECRET'), tenant.id), notice, rows }),
+  );
 }
 
 // -- routes -------------------------------------------------------------------------
@@ -227,8 +179,7 @@ bigcommerceApp.get('/auth', async (c: Context) => {
     });
     tenant = tenantFor(c, storeHash)!;
   }
-  const provisioned = await provision(tenant);
-  return c.html(settingsPage(tenant, sessionToken(storeHash), 'Installed.', provisioned));
+  return page(c, tenant, 'Installed.', await provision(tenant));
 });
 
 bigcommerceApp.get('/load', (c: Context) => {
@@ -236,7 +187,7 @@ bigcommerceApp.get('/load', (c: Context) => {
   if (!auth) return c.text('Invalid signed payload', 401);
   const tenant = tenantFor(c, auth.storeHash);
   if (!tenant?.config.bigcommerceAccessToken) return c.text('Store is not installed', 404);
-  return c.html(settingsPage(tenant, sessionToken(auth.storeHash), '', null));
+  return page(c, tenant, '', null);
 });
 
 bigcommerceApp.get('/uninstall', (c: Context) => {
@@ -251,24 +202,11 @@ bigcommerceApp.get('/uninstall', (c: Context) => {
 
 bigcommerceApp.post('/settings', async (c: Context) => {
   const form = await c.req.parseBody();
-  const str = (k: string) => (typeof form[k] === 'string' ? (form[k] as string).trim() : '');
-  const storeHash = verifySessionToken(str('token'));
+  const token = typeof form.token === 'string' ? form.token : '';
+  const storeHash = verifySessionToken(env('BC_CLIENT_SECRET'), token);
   if (!storeHash) return c.text('Session expired, reopen the app', 401);
-  const current = loadTenantConfig(storeHash);
-  if (!current) return c.text('Store is not installed', 404);
-
-  const update: Record<string, any> = {
-    enabled: form.enabled !== undefined,
-    strictSignatures: form.strictSignatures !== undefined,
-    stripePublishableKey: str('stripePublishableKey'),
-  };
-  if (form.clearStripe !== undefined) {
-    update.stripeSecretKey = '';
-    update.stripePublishableKey = '';
-  } else if (str('stripeSecretKey')) update.stripeSecretKey = str('stripeSecretKey');
-  if (form.clearSimulation !== undefined) update.simulationSecret = '';
-  else if (str('simulationSecret')) update.simulationSecret = str('simulationSecret');
-  upsertTenant(storeHash, update);
+  if (!loadTenantConfig(storeHash)) return c.text('Store is not installed', 404);
+  upsertTenant(storeHash, settingsFromForm(form));
 
   const tenant = tenantFor(c, storeHash)!;
   let notice = 'Settings saved.';
@@ -277,5 +215,5 @@ bigcommerceApp.post('/settings', async (c: Context) => {
   } catch (e: any) {
     notice += ` Profile page update failed (${e?.message ?? e}).`;
   }
-  return c.html(settingsPage(tenant, sessionToken(storeHash), notice, null));
+  return page(c, tenant, notice, null);
 });

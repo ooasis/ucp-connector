@@ -8,12 +8,14 @@
  *
  * Catalog via Wix Stores Get Product, coupons via Coupons Query, known buyers
  * via Contacts Query. Tenant config: wixApiBase (mock override), wixSiteId,
- * wixAccessToken, wixWebhookPublicKey (inbound webhook JWT verification).
+ * wixWebhookPublicKey (per-tenant inbound webhook key, dev/legacy) and either
+ * wixInstanceId (app instance: 4 h client_credentials tokens under
+ * WIX_APP_ID/WIX_APP_SECRET, cached here) or a static wixAccessToken.
  */
 
 import { createVerify } from 'node:crypto';
 import { UcpError } from '../errors.js';
-import type { Tenant } from '../tenants.js';
+import type { Tenant, TenantConfig } from '../tenants.js';
 import type {
   CartLine,
   CatalogItem,
@@ -30,27 +32,61 @@ const cents = (amount: string | number | undefined): number => Math.round(Number
 /** Wix decimal-string amount from minor units. */
 const dollars = (minor: number): string => (minor / 100).toFixed(2);
 
-async function wix(
+const tokenCache = new Map<string, { token: string; exp: number }>();
+
+/** App-instance access token (client_credentials, 4 h), or the static dev token. */
+async function accessToken(cfg: TenantConfig): Promise<string> {
+  const id = cfg.wixInstanceId;
+  if (!id) return cfg.wixAccessToken;
+  const hit = tokenCache.get(id);
+  if (hit && hit.exp > Date.now()) return hit.token;
+  let res: Response;
+  try {
+    res = await fetch(`${cfg.wixApiBase.replace(/\/$/, '')}/oauth2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'client_credentials',
+        client_id: process.env.WIX_APP_ID ?? '',
+        client_secret: process.env.WIX_APP_SECRET ?? '',
+        instance_id: id,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e: any) {
+    throw new UcpError(502, 'INTERNAL_ERROR', `Wix unreachable: ${e?.message ?? e}`);
+  }
+  const json: any = await res.json().catch(() => null);
+  if (!res.ok || !json?.access_token) {
+    throw new UcpError(502, 'INTERNAL_ERROR', `Wix token request failed (HTTP ${res.status})`);
+  }
+  const ttl = (Number(json.expires_in) || 14_400) * 1000;
+  tokenCache.set(id, { token: json.access_token, exp: Date.now() + ttl - 60_000 });
+  return json.access_token;
+}
+
+export async function wix(
   tenant: Tenant,
   method: string,
   path: string,
   body?: any,
 ): Promise<[number, any]> {
   const cfg = tenant.config;
-  if (!cfg.wixSiteId || !cfg.wixAccessToken) {
+  if (!cfg.wixInstanceId && (!cfg.wixSiteId || !cfg.wixAccessToken)) {
     throw new UcpError(500, 'INTERNAL_ERROR', 'Wix is not configured on this tenant');
   }
   const url = `${cfg.wixApiBase.replace(/\/$/, '')}${path}`;
+  const headers: Record<string, string> = {
+    Authorization: await accessToken(cfg),
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+  if (cfg.wixSiteId) headers['wix-site-id'] = cfg.wixSiteId;
   let res: Response;
   try {
     res = await fetch(url, {
       method,
-      headers: {
-        Authorization: cfg.wixAccessToken,
-        'wix-site-id': cfg.wixSiteId,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(30_000),
     });
@@ -291,7 +327,7 @@ function totalOf(totals: any[]): number {
 export function verifyWixWebhookJwt(
   publicKeyPem: string,
   jwt: string,
-): { eventType: string; entityId?: string; data: any } | null {
+): { eventType: string; instanceId?: string; entityId?: string; data: any } | null {
   const parts = jwt.trim().split('.');
   if (parts.length !== 3) return null;
   try {
@@ -304,7 +340,7 @@ export function verifyWixWebhookJwt(
     if (claims.exp !== undefined && claims.exp * 1000 < Date.now()) return null;
     const event = typeof claims.data === 'string' ? JSON.parse(claims.data) : claims.data;
     const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-    return { eventType: event.eventType ?? '', entityId: event.entityId, data };
+    return { eventType: event.eventType ?? '', instanceId: event.instanceId, entityId: event.entityId, data };
   } catch {
     return null;
   }

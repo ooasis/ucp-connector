@@ -63,9 +63,9 @@ function signedPayloadJwt(storeHash: string, secret = CLIENT_SECRET, aud = CLIEN
 }
 
 const mockHooks = async () =>
-  (await fetch(`${MOCK}/_hooks`).then((r) => r.json())).filter((h: any) => h.store_hash === HASH);
+  (await fetch(`${MOCK}/_hooks`).then((r) => (r.json() as Promise<any>))).filter((h: any) => h.store_hash === HASH);
 const mockPages = async () =>
-  (await fetch(`${MOCK}/_pages`).then((r) => r.json())).filter((p: any) => p.store_hash === HASH);
+  (await fetch(`${MOCK}/_pages`).then((r) => (r.json() as Promise<any>))).filter((p: any) => p.store_hash === HASH);
 
 const tokenOf = (page: string): string => {
   const m = /name="token" value="([^"]+)"/.exec(page);
@@ -132,7 +132,7 @@ try {
     published.ucp.services['dev.ucp.shopping'][0].endpoint,
     `${origin}/${HASH}/ucp`,
   );
-  const hosted = await fetch(`${origin}/${HASH}/.well-known/ucp`).then((r) => r.json());
+  const hosted = await fetch(`${origin}/${HASH}/.well-known/ucp`).then((r) => (r.json() as Promise<any>));
   assert.deepEqual(published.ucp.keys, hosted.ucp.keys);
   ok('profile page pushed to the storefront; matches the hosted profile');
 
@@ -178,7 +178,7 @@ try {
   ok('blank secret fields keep the stored values');
 
   const handlers = Object.values(
-    (await fetch(`${origin}/${HASH}/.well-known/ucp`).then((r) => r.json())).ucp.payment_handlers,
+    (await fetch(`${origin}/${HASH}/.well-known/ucp`).then((r) => (r.json() as Promise<any>))).ucp.payment_handlers,
   )
     .flat()
     .map((h: any) => h.id)
@@ -223,7 +223,7 @@ try {
     }),
   });
   assert.equal(create.status, 201);
-  const session = await create.json();
+  const session = await (create.json() as Promise<any>);
   const optionId = session.fulfillment.methods[0].groups[0].options[0].id;
   const update = await fetch(`${base}/ucp/checkout-sessions/${session.id}`, {
     method: 'PUT',
@@ -239,7 +239,7 @@ try {
         ],
       },
     }),
-  }).then((r) => r.json());
+  }).then((r) => (r.json() as Promise<any>));
   assert.equal(update.status, 'ready_for_complete');
   const complete = await fetch(`${base}/ucp/checkout-sessions/${session.id}/complete`, {
     method: 'POST',
@@ -258,12 +258,12 @@ try {
     }),
   });
   assert.equal(complete.status, 200);
-  const done = await complete.json();
+  const done = await (complete.json() as Promise<any>);
   assert.equal(done.status, 'completed');
   assert.ok(done.order?.id);
   ok(`checkout on ${HASH}: create -> option -> complete -> order ${done.order.id}`);
 
-  const bcOrders = (await fetch(`${MOCK}/_orders`).then((r) => r.json())) as any[];
+  const bcOrders = (await fetch(`${MOCK}/_orders`).then((r) => (r.json() as Promise<any>))) as any[];
   const placed = bcOrders.find((o) => o.staff_notes === `UCP order ${done.order.id}`);
   assert.ok(placed, 'BigCommerce order created');
   assert.equal(placed.status_id, 11);
@@ -273,7 +273,7 @@ try {
     body: JSON.stringify({ scope: 'store/shipment/created', data: { orderId: placed.id } }),
   });
   assert.equal(hookRes.status, 200);
-  const entity = await fetch(`${base}/ucp/orders/${done.order.id}`).then((r) => r.json());
+  const entity = await fetch(`${base}/ucp/orders/${done.order.id}`).then((r) => (r.json() as Promise<any>));
   assert.ok(
     (entity.fulfillment?.events ?? []).some((e: any) => e.type === 'shipped'),
     'shipped event on the order',

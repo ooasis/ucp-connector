@@ -7,7 +7,11 @@
  * like the stub `dev` tenant.
  *
  * State is in-memory; auth is a fixed Authorization token (WIX_MOCK_TOKEN,
- * default "mock-wix-token") + a wix-site-id header. Add Payments dedupes on
+ * default "mock-wix-token") + a wix-site-id header, or an app-instance token
+ * "<token>:<instanceId>" minted by POST /oauth2/token (client_credentials with
+ * WIX_MOCK_APP_ID / WIX_MOCK_APP_SECRET, default mock-wix-app-id /
+ * mock-wix-app-secret; no site header needed). GET /apps/v1/instance returns
+ * the instance + site info. Add Payments dedupes on
  * providerTransactionId and recalculates paymentStatus async (~250ms), like
  * real Wix. Debug endpoints (not Wix): GET /_orders dumps the order store;
  * POST /_emit-webhook {url, eventType, orderId} signs a double-wrapped RS256
@@ -27,6 +31,9 @@ const ROOT = join(HERE, '..', '..');
 const fixtures = JSON.parse(readFileSync(join(ROOT, 'config', 'fixtures.json'), 'utf8'));
 const TOKEN = process.env.WIX_MOCK_TOKEN ?? 'mock-wix-token';
 const SITE_ID = process.env.WIX_MOCK_SITE_ID ?? 'mock-site';
+const APP_ID = process.env.WIX_MOCK_APP_ID ?? 'mock-wix-app-id';
+const APP_SECRET = process.env.WIX_MOCK_APP_SECRET ?? 'mock-wix-app-secret';
+const SITE_URL = process.env.WIX_MOCK_SITE_URL ?? 'https://mock-site.wixsite.com/flowers';
 const WEBHOOK_KEY = readFileSync(join(HERE, 'webhook-key.pem'), 'utf8');
 
 /** Wix decimal-string amount from minor units. */
@@ -152,11 +159,48 @@ const wixError = (c: Context, status: number, message: string, code = 'INVALID_A
 
 const app = new Hono();
 
+/** Instance id carried by an app-instance token, or null for the static token. */
+const instanceOf = (auth: string | undefined): string | null =>
+  auth?.startsWith(`${TOKEN}:`) ? auth.slice(TOKEN.length + 1) : null;
+
 app.use('*', async (c, next) => {
-  if (c.req.path.startsWith('/_')) return next(); // debug endpoints skip auth
-  if (c.req.header('authorization') !== TOKEN) return wixError(c, 401, 'Unauthorized', 'UNAUTHENTICATED');
-  if (c.req.header('wix-site-id') !== SITE_ID) return wixError(c, 403, 'Unknown site', 'PERMISSION_DENIED');
+  if (c.req.path.startsWith('/_') || c.req.path === '/oauth2/token') return next();
+  const auth = c.req.header('authorization');
+  if (auth !== TOKEN && !instanceOf(auth)) return wixError(c, 401, 'Unauthorized', 'UNAUTHENTICATED');
+  // Static (API-key style) tokens must name the site; instance tokens are site-scoped already.
+  if (auth === TOKEN && c.req.header('wix-site-id') !== SITE_ID) {
+    return wixError(c, 403, 'Unknown site', 'PERMISSION_DENIED');
+  }
   return next();
+});
+
+// -- OAuth: Create Access Token (client_credentials) + Get App Instance ------------------
+
+app.post('/oauth2/token', async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  if (
+    b.grant_type !== 'client_credentials' ||
+    b.client_id !== APP_ID ||
+    b.client_secret !== APP_SECRET ||
+    !b.instance_id
+  ) {
+    return c.json({ error: 'invalid_client', error_description: 'bad credentials or instance_id' }, 400);
+  }
+  return c.json({ access_token: `${TOKEN}:${b.instance_id}`, token_type: 'Bearer', expires_in: 14400 });
+});
+
+app.get('/apps/v1/instance', (c) => {
+  const instanceId = instanceOf(c.req.header('authorization')) ?? 'mock-instance';
+  return c.json({
+    instance: { instanceId, appName: 'UCP Agent', appVersion: '0.1.0', isFree: true, permissions: [] },
+    site: {
+      siteId: SITE_ID,
+      siteDisplayName: 'Mock Wix Flower Shop',
+      locale: 'en',
+      paymentCurrency: 'USD',
+      url: SITE_URL,
+    },
+  });
 });
 
 // -- Stores: products + coupons ------------------------------------------------------
@@ -317,10 +361,10 @@ app.get('/_orders', (c) => c.json([...orders.values()]));
 const b64url = (data: string | Buffer) => Buffer.from(data).toString('base64url');
 
 /** Sign a Wix-style webhook JWT: claims.data and event.data are JSON strings. */
-function webhookJwt(eventType: string, entityId: string, data: any): string {
+function webhookJwt(eventType: string, entityId: string, data: any, instanceId = 'mock-instance'): string {
   const event = {
     eventType,
-    instanceId: 'mock-instance',
+    instanceId,
     entityId,
     eventTime: new Date().toISOString(),
     data: JSON.stringify(data),
@@ -333,16 +377,24 @@ function webhookJwt(eventType: string, entityId: string, data: any): string {
   return `${head}.${claims}.${b64url(sign.sign(WEBHOOK_KEY))}`;
 }
 
-// POST {url, eventType?, orderId} -> signs + delivers the JWT like Wix would.
+// POST {url, eventType?, orderId?, instanceId?} -> signs + delivers the JWT like
+// Wix would. App lifecycle events (AppInstalled / AppRemoved) need no orderId.
 app.post('/_emit-webhook', async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  const order = orders.get(String(body.orderId ?? ''));
-  if (!body.url || !order) return c.json({ error: 'url and a known orderId are required' }, 400);
   const eventType = body.eventType ?? 'wix.ecom.v1.fulfillment_created';
-  const data = eventType.includes('fulfillment')
-    ? { orderId: order.id, fulfillment: { trackingInfo: { trackingNumber: 'MOCK123', shippingProvider: 'usps' } } }
-    : { order };
-  const jwt = webhookJwt(eventType, order.id, data);
+  const instanceId = body.instanceId ?? 'mock-instance';
+  if (!body.url) return c.json({ error: 'url is required' }, 400);
+  let jwt: string;
+  if (/^App(Installed|Removed)$/.test(eventType)) {
+    jwt = webhookJwt(eventType, instanceId, { appId: APP_ID }, instanceId);
+  } else {
+    const order = orders.get(String(body.orderId ?? ''));
+    if (!order) return c.json({ error: 'a known orderId is required' }, 400);
+    const data = eventType.includes('fulfillment')
+      ? { orderId: order.id, fulfillment: { trackingInfo: { trackingNumber: 'MOCK123', shippingProvider: 'usps' } } }
+      : { order };
+    jwt = webhookJwt(eventType, order.id, data, instanceId);
+  }
   const res = await fetch(body.url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },

@@ -39,10 +39,14 @@ export type TenantConfig = {
   bigcommerceWebhookSecret: string;
   /** Storefront origin (from /v2/store secure_url); hosts the pushed profile page. */
   bigcommerceStorefrontUrl: string;
-  /** Wix adapter: API base (mock override), site id, API key/OAuth token. */
+  /** Wix adapter: API base (mock override), site id, static token (dev/legacy). */
   wixApiBase: string;
   wixSiteId: string;
   wixAccessToken: string;
+  /** App instance id: when set, tokens come from client_credentials (wix-app.ts). */
+  wixInstanceId: string;
+  /** Published site URL (Get App Instance), where /.well-known/ucp must be fronted. */
+  wixSiteUrl: string;
   /** RSA public key (PEM) verifying inbound Wix webhook JWTs. */
   wixWebhookPublicKey: string;
 };
@@ -91,6 +95,8 @@ const DEFAULTS: TenantConfig = {
   wixApiBase: 'https://www.wixapis.com',
   wixSiteId: '',
   wixAccessToken: '',
+  wixInstanceId: '',
+  wixSiteUrl: '',
   wixWebhookPublicKey: '',
 };
 

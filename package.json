@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "smoke": "tsx scripts/smoke.ts",
     "smoke:install": "tsx scripts/install-smoke.ts",
+    "smoke:wix-install": "tsx scripts/wix-install-smoke.ts",
     "mock:bc": "tsx dev/mock-bigcommerce/server.ts",
     "mock:wix": "tsx dev/mock-wix/server.ts"
   },

@@ -3,7 +3,55 @@
 *Updated 2026-09-06. Stage 2 (protocol core), stage 3 BigCommerce AND stage 3
 Wix (each against a local mock) verified: conformance GREEN on ALL THREE
 tenants — 75 passed / 2 skipped each (identical bar to Magento). BigCommerce
-plan phase 5 (app shell) built and verified against the mock (below).*
+AND Wix plan phase 5 (app shells) built and verified against the mocks (below).*
+
+## Wix app shell (plan phase 5, 2026-09-06, uncommitted)
+
+- Wix's current model (custom OAuth is deprecated for new apps): no redirect
+  dance. `src/adapters/wix.ts` now mints 4 h access tokens per app instance
+  via `POST {WIX_API_BASE}/oauth2/token` (client_credentials with
+  `WIX_APP_ID`/`WIX_APP_SECRET` + `instance_id`, cached in-process, refreshed
+  a minute early) whenever `wixInstanceId` is set; static `wixAccessToken` +
+  `wix-site-id` stay for the dev/legacy tenant. `wix()` is exported.
+- `src/wix-app.ts`, mounted at `/wix`: `POST /webhooks` is the ONE app-level
+  sink (all subscriptions in the app dashboard point here; Wix has no
+  webhook-registration API), verified with `WIX_APP_PUBLIC_KEY`; events are
+  routed by `instanceId`: AppInstalled -> `installInstance` (tenant id =
+  instanceId, `adapter=wix`, enabled, then `GET /apps/v1/instance` fills
+  merchantName/currency/siteId/site url), AppRemoved -> disable (settings
+  kept), eCom order/fulfillment -> `handleWixEcomEvent` (shared with the
+  per-tenant `/{t}/wix/webhooks` route). `GET /dashboard?instance=` verifies
+  Wix's HMAC-SHA256 signed instance (app secret), installs on the spot if the
+  install webhook was missed, and renders the settings page with the
+  `.well-known` instructions + a live status check (fetches
+  `{siteUrl}/.well-known/ucp` through the SSRF guard and compares the
+  endpoint). `POST /settings` as BigCommerce.
+- `src/app-settings.ts`: settings page, form -> config mapping and the 1 h
+  HMAC session token, now shared by both app shells (bigcommerce-app.ts
+  refactored onto it; BC smoke still 15/15).
+- Mock Wix gained `POST /oauth2/token` (instance tokens `<token>:<instanceId>`,
+  no site header needed), `GET /apps/v1/instance`, and `/_emit-webhook` now
+  takes `instanceId` and signs AppInstalled/AppRemoved without an order.
+- Verified: typecheck clean (scripts included — the two smoke scripts needed
+  `as Promise<any>` on fetch JSON); `npm run smoke` green; `npm run
+  smoke:install` 15/15; `npm run smoke:wix-install` **13/13** (AppInstalled ->
+  tenant + site info, hosted profile, unsigned webhook 403, dashboard ok /
+  3 forged 401, settings save + masked + blank-keeps + forged token 401,
+  checkout with a client_credentials token, fulfillment webhook via the
+  app-level sink -> shipped, AppRemoved 404, reinstall keeps settings,
+  unknown instance installed on dashboard open); dev connector restarted
+  with BC + Wix env, instance installed via the mock's signed AppInstalled
+  webhook, secret set via the form, full conformance vs
+  `SERVER_URL=http://localhost:8787/<instanceId>` — **75 passed / 2 skipped**.
+- Env: `WIX_APP_ID`, `WIX_APP_SECRET`, `WIX_APP_PUBLIC_KEY`, `WIX_API_BASE`,
+  `PUBLIC_BASE_URL`.
+- Not done (needs a real dev site + app in the Wix dev center, user action):
+  confirm the webhook `eventType` strings for App Instance Installed/Removed
+  (the sink matches `AppInstalled|app_instance_installed|app_installed`,
+  same for removed — widen if the real slug differs), `GET /apps/v1/instance`
+  field names on a live instance, and spike S1 (`.well-known` fronting) which
+  the dashboard status row is built to report on. Billing + App Market
+  listing per plan.
 
 ## BigCommerce app shell (plan phase 5, 2026-09-06, uncommitted)
 

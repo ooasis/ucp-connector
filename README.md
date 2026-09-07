@@ -166,6 +166,47 @@ never talks to a platform directly.
 - Response signing is not implemented (parity with Magento/Woo, which passed
   conformance without it).
 
+## Wix app shell (plan phase 5)
+
+`src/wix-app.ts` makes the connector a self-managed Wix app. Wix has no OAuth
+redirect flow for new apps: tokens are minted per app instance with
+client_credentials (4 h, cached in `src/adapters/wix.ts`), installs arrive as
+webhooks, and the dashboard page gets an HMAC-signed `instance` parameter.
+
+| Route | Role |
+|---|---|
+| `POST /wix/webhooks` | The single webhook URL for the app (set in the app dashboard). App Instance Installed creates the tenant (id = instance id) and fills site info; App Instance Removed disables it; eCom order/fulfillment events become signed UCP order webhooks |
+| `GET /wix/dashboard?instance=…` | Dashboard page URL: verifies the signed instance, installs on first open if the webhook was missed, shows the `.well-known` setup instructions with a live status check |
+| `POST /wix/settings` | Same settings form as BigCommerce |
+
+Env: `WIX_APP_ID` / `WIX_APP_SECRET` (OAuth page of the app dashboard),
+`WIX_APP_PUBLIC_KEY` (webhook public key, PEM), `WIX_API_BASE` (default
+`https://www.wixapis.com`), `PUBLIC_BASE_URL`.
+
+Webhook subscriptions to add in the app dashboard, all to
+`{PUBLIC_BASE_URL}/wix/webhooks`: App Management → App Instance Installed,
+App Instance Removed; eCommerce → Order Updated, Order Approved, Fulfillment
+Created. Permissions: Stores read, eCom checkout/orders/order transactions
+manage, Contacts read, App Instance read.
+
+Against the mock (its OAuth accepts `mock-wix-app-id` / `mock-wix-app-secret`;
+webhooks are signed with `dev/mock-wix/webhook-key.pem`):
+
+```bash
+npm run mock:wix
+WIX_APP_ID=mock-wix-app-id WIX_APP_SECRET=mock-wix-app-secret WIX_API_BASE=http://localhost:8789 \
+WIX_APP_PUBLIC_KEY="$(node -e 'const {createPublicKey}=require("node:crypto");process.stdout.write(createPublicKey(require("node:fs").readFileSync("dev/mock-wix/webhook-key.pem")).export({type:"spki",format:"pem"}).toString())')" \
+npm run start
+curl -X POST localhost:8789/_emit-webhook -H 'content-type: application/json' \
+  -d '{"url":"http://localhost:8787/wix/webhooks","eventType":"AppInstalled","instanceId":"site-1"}'
+curl http://localhost:8787/site-1/.well-known/ucp
+npm run smoke:wix-install   # 13-step install/dashboard/settings/checkout/remove/reinstall check
+```
+
+The merchant-domain `/.well-known/ucp` is not solved by the app: Wix cannot
+serve root files, so the dashboard tells the merchant to front the site
+(Cloudflare Worker or proxy rule) and reports whether that is live.
+
 ## License
 
 Licensed under the [PolyForm Shield License 1.0.0](LICENSE).

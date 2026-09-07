@@ -15,6 +15,7 @@
  *   POST /{t}/acp/checkout_sessions                    ACP create (Bearer key)
  *   GET/POST /{t}/acp/checkout_sessions/{id}[...]      ACP get/update/complete/cancel
  *   /bigcommerce/{auth,load,uninstall,settings}        BigCommerce app shell (bigcommerce-app.ts)
+ *   /wix/{webhooks,dashboard,settings}                 Wix app shell (wix-app.ts)
  */
 
 import { serve } from '@hono/node-server';
@@ -29,6 +30,7 @@ import { dispatch, type UcpOp, type UcpRequest } from './dispatcher.js';
 import { markShipped, pushOrderUpdated, simulateShipping } from './orders.js';
 import { businessProfile } from './profile.js';
 import { seedTenants, tenantFor, type Tenant } from './tenants.js';
+import { handleWixEcomEvent, wixApp } from './wix-app.js';
 
 seedTenants();
 
@@ -140,22 +142,15 @@ app.post('/:tenant/bigcommerce/webhooks', async (c) => {
 
 // -- Wix webhooks (signed JWT body) -> UCP order webhooks ------------------------------
 
-// Wix delivers each event as a raw RS256 JWT signed with the app's key; the
-// tenant holds the public PEM. Registration is plan phase 5 (until then, the
-// mock's /_emit-webhook or curl simulates delivery).
+// Per-tenant sink verified with the tenant's own public key (dev/legacy tenants).
+// Installed apps use the app-level POST /wix/webhooks in wix-app.ts instead.
 app.post('/:tenant/wix/webhooks', async (c) => {
   const tenant = tenantFrom(c);
   if (!tenant) return notFound(c);
   const pem = tenant.config.wixWebhookPublicKey;
   const event = pem ? verifyWixWebhookJwt(pem, await c.req.text()) : null;
   if (!event) return c.json({ error: 'forbidden' }, 403);
-  // Fulfillment events carry the order id as data.orderId; order events as entityId.
-  const ref = String(event.data?.orderId ?? event.entityId ?? '');
-  const orderUuid = orderIdByPlatformRef(tenant.id, ref);
-  if (orderUuid) {
-    if (event.eventType.includes('fulfillment_created')) await markShipped(tenant, orderUuid);
-    else if (/order_(updated|approved)/.test(event.eventType)) await pushOrderUpdated(tenant, orderUuid);
-  }
+  await handleWixEcomEvent(tenant, event);
   return c.json({ ok: true });
 });
 
@@ -183,6 +178,7 @@ app.post('/:tenant/acp/checkout_sessions/:id/complete', acpRoute('complete', tru
 app.post('/:tenant/acp/checkout_sessions/:id/cancel', acpRoute('cancel', true));
 
 app.route('/bigcommerce', bigcommerceApp);
+app.route('/wix', wixApp);
 
 app.get('/healthz', (c) => c.json({ ok: true }));
 
