@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 process.env.UCP_NO_LISTEN = '1';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+await import('../src/index.js'); // Node storage + seeds
 const { tenantFor } = await import('../src/tenants.js');
 const { wix, WIX_STORES_APP_ID } = await import('../src/adapters/wix.js');
 

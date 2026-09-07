@@ -16,6 +16,9 @@
     "smoke": "tsx scripts/smoke.ts",
     "smoke:install": "tsx scripts/install-smoke.ts",
     "smoke:wix-install": "tsx scripts/wix-install-smoke.ts",
+    "dev:cf": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "cf:types": "wrangler types",
     "mock:bc": "tsx dev/mock-bigcommerce/server.ts",
     "mock:wix": "tsx dev/mock-wix/server.ts"
   },
@@ -29,6 +32,7 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
+    "wrangler": "^4",
     "typescript": "^5.7.2"
   }
 }

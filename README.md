@@ -167,6 +167,46 @@ never talks to a platform directly.
 - Response signing is not implemented (parity with Magento/Woo, which passed
   conformance without it).
 
+## Deploy to Cloudflare (Workers + Durable Objects)
+
+The same code runs as a Node service (`npm run start`, SQLite file) or as a
+Cloudflare Worker (`src/worker.ts`): one SQLite-backed Durable Object per
+tenant holds that tenant's rows and runs the shared Hono app. The Worker only
+picks the tenant id out of each request (path segment, OAuth `context`, signed
+payloads, form tokens) and forwards; all verification happens in the object.
+`process.env` is populated from Worker vars and secrets
+(`nodejs_compat_populate_process_env`).
+
+```sh
+npx wrangler login
+# non-secret vars live in wrangler.jsonc (PUBLIC_BASE_URL, BC_CLIENT_ID, WIX_APP_ID)
+npx wrangler secret put UCP_MASTER_KEY        # 32-byte hex, e.g. openssl rand -hex 32
+npx wrangler secret put BC_CLIENT_SECRET
+npx wrangler secret put WIX_APP_SECRET
+npx wrangler secret put WIX_APP_PUBLIC_KEY < wix-public-key.pem
+npm run deploy                                # -> https://ucp-connector.<account>.workers.dev
+```
+
+Set `PUBLIC_BASE_URL` in `wrangler.jsonc` to the deployed origin (workers.dev
+URL or a custom domain) and point the Wix / BigCommerce app callback URLs at
+it. Tenants are created by the install flows; there is no seeding in
+production. Existing merchants re-enter Stripe keys on the dashboard page
+(tenant rows do not migrate from the Node SQLite file).
+
+Local Worker dev against the mocks:
+
+```sh
+cp .dev.vars.example .dev.vars      # SEED_DEV_TENANTS=1 seeds dev/bigcommerce-dev/wix-dev objects
+npm run mock:bc & npm run mock:wix &
+npm run dev:cf -- --port 8797
+curl http://localhost:8797/wix-dev/.well-known/ucp
+```
+
+Runtime differences to know: no cross-tenant queries (each tenant is its own
+database), the SSRF guard skips DNS on Workers (the platform refuses fetches to
+private addresses), and Durable Object duration is billed while a request
+waits on the platform API (~2 GB-s per checkout, see Cloudflare pricing).
+
 ## Wix app shell (plan phase 5)
 
 `src/wix-app.ts` makes the connector a self-managed Wix app. Wix has no OAuth

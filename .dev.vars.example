@@ -1,0 +1,13 @@
+# Local `wrangler dev` variables (copy to .dev.vars; never commit .dev.vars).
+SEED_DEV_TENANTS=1
+UCP_MASTER_KEY=<32-byte hex>
+PUBLIC_BASE_URL=http://localhost:8797
+BC_CLIENT_ID=mock-client-id
+BC_CLIENT_SECRET=mock-client-secret
+BC_LOGIN_BASE=http://localhost:8788
+BC_API_BASE=http://localhost:8788
+WIX_APP_ID=mock-wix-app-id
+WIX_APP_SECRET=mock-wix-app-secret
+WIX_API_BASE=http://localhost:8789
+# Public half of dev/mock-wix/webhook-key.pem, one line with \n escapes:
+WIX_APP_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"

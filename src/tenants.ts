@@ -5,14 +5,9 @@
  */
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { Context } from 'hono';
-import { getDb, DATA_DIR } from './db.js';
+import { getDb } from './db.js';
 import { ecJwkThumbprint, type Jwk } from './rfc9421.js';
-
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 export type TenantConfig = {
   enabled: boolean;
@@ -102,15 +97,18 @@ const DEFAULTS: TenantConfig = {
 
 // -- master key / encryption at rest -----------------------------------------
 
+let masterKeyFallback: (() => Buffer) | null = null;
+
+/** Node registers the data/master.key file here; Workers must set UCP_MASTER_KEY. */
+export function setMasterKeyFallback(fn: () => Buffer): void {
+  masterKeyFallback = fn;
+}
+
 function masterKey(): Buffer {
   const env = process.env.UCP_MASTER_KEY;
   if (env) return Buffer.from(env, 'hex');
-  const file = join(DATA_DIR, 'master.key');
-  if (!existsSync(file)) {
-    mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(file, randomBytes(32).toString('hex'), { mode: 0o600 });
-  }
-  return Buffer.from(readFileSync(file, 'utf8').trim(), 'hex');
+  if (masterKeyFallback) return masterKeyFallback();
+  throw new Error('UCP_MASTER_KEY is not set (32-byte hex)');
 }
 
 function encrypt(plaintext: string): string {
@@ -167,16 +165,10 @@ export function upsertTenant(id: string, config: Partial<TenantConfig>): void {
     .run(id, JSON.stringify(merged));
 }
 
-/** Seed tenants from every config/*-tenant.json (idempotent, config wins). */
-export function seedTenants(): void {
-  const dir = join(ROOT, 'config');
-  if (!existsSync(dir)) return;
-  for (const file of readdirSync(dir)) {
-    if (!file.endsWith('-tenant.json')) continue;
-    const { id = file.replace(/-tenant\.json$/, ''), ...config } = JSON.parse(
-      readFileSync(join(dir, file), 'utf8'),
-    );
-    upsertTenant(id, config);
+/** Seed tenants from parsed config objects ({id, ...config}); idempotent, config wins. */
+export function seedTenants(configs: Record<string, any>[]): void {
+  for (const { id, ...config } of configs) {
+    if (id) upsertTenant(String(id), config);
   }
 }
 

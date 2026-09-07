@@ -4,8 +4,8 @@
  * discovery and signature keys. Port of the Magento Profile model.
  */
 
-import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import { IS_WORKERS } from './runtime.js';
 import type { Tenant } from './tenants.js';
 import { publishedKeys } from './tenants.js';
 import { ucpHandlers } from './payments.js';
@@ -107,7 +107,11 @@ export async function isPublicUrl(url: string): Promise<boolean> {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
   const host = parsed.hostname.replace(/^\[|\]$/g, '');
   if (isIP(host)) return isPublicIp(host);
+  // Workers cannot resolve DNS here, and the platform already refuses fetches
+  // to private/internal addresses, so the hostname check is done by the runtime.
+  if (IS_WORKERS) return true;
   try {
+    const { lookup } = await import('node:dns/promises');
     const { address } = await lookup(host);
     return isPublicIp(address);
   } catch {

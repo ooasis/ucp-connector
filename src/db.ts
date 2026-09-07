@@ -1,24 +1,48 @@
 /**
  * SQLite state: tenants (config + signing keys), checkout sessions,
  * idempotency replay, order entities. All JSON documents, keyed per tenant.
+ *
+ * Storage is behind a tiny synchronous interface with two backends:
+ *   - Node: better-sqlite3 (db-node.ts), one file, set once with setDefaultDb()
+ *   - Cloudflare: a Durable Object's SQLite (worker.ts), one object per tenant,
+ *     scoped per request with withDb() via AsyncLocalStorage
+ * Callers just use getDb().prepare(sql).get/all/run and never know which.
  */
 
-import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-export const DATA_DIR = process.env.UCP_DATA_DIR ?? join(ROOT, 'data');
+export interface SqlStatement {
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+  run(...params: unknown[]): unknown;
+}
 
-let db: Database.Database | null = null;
+export interface SqlDb {
+  prepare(sql: string): SqlStatement;
+  /** Run one or more statements without bindings (schema). */
+  exec(sql: string): void;
+}
 
-export function getDb(): Database.Database {
-  if (db) return db;
-  mkdirSync(DATA_DIR, { recursive: true });
-  db = new Database(join(DATA_DIR, 'connector.db'));
-  db.pragma('journal_mode = WAL');
-  db.exec(`
+const current = new AsyncLocalStorage<SqlDb>();
+let defaultDb: SqlDb | null = null;
+
+/** Process-wide database (Node). */
+export function setDefaultDb(db: SqlDb): void {
+  defaultDb = db;
+}
+
+/** Run fn with db as the current database for everything awaited inside (Workers). */
+export function withDb<T>(db: SqlDb, fn: () => T): T {
+  return current.run(db, fn);
+}
+
+export function getDb(): SqlDb {
+  const db = current.getStore() ?? defaultDb;
+  if (!db) throw new Error('storage not initialised: call setDefaultDb() or withDb()');
+  return db;
+}
+
+export const SCHEMA = `
     CREATE TABLE IF NOT EXISTS tenants (
       id           TEXT PRIMARY KEY,
       config       TEXT NOT NULL,           -- TenantConfig JSON
@@ -49,8 +73,11 @@ export function getDb(): Database.Database {
       platform_ref TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (tenant, id)
     );
-  `);
-  return db;
+`;
+
+/** Create the tables (idempotent). */
+export function migrate(db: SqlDb): void {
+  db.exec(SCHEMA);
 }
 
 // -- sessions ---------------------------------------------------------------

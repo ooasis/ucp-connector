@@ -2,3 +2,6 @@ node_modules/
 data/
 .env
 config/live/
+.wrangler/
+.dev.vars
+worker-configuration.d.ts

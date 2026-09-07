@@ -5,6 +5,43 @@ Wix (each against a local mock) verified: conformance GREEN on ALL THREE
 tenants — 75 passed / 2 skipped each (identical bar to Magento). BigCommerce
 AND Wix plan phase 5 (app shells) built and verified against the mocks (below).*
 
+## Cloudflare port (2026-09-07, uncommitted)
+
+- One codebase, two entries. `src/app.ts` is the shared Hono app; `src/index.ts`
+  is the Node server (better-sqlite3 via `src/db-node.ts`, config seeds,
+  master-key file); `src/worker.ts` is the Cloudflare Worker: a SQLite-backed
+  Durable Object per tenant (`TenantObject`, `new_sqlite_classes`) runs the app
+  against its own storage; the Worker resolves the tenant id from the request
+  (path segment, BigCommerce `context`/`signed_payload_jwt`, Wix webhook JWT /
+  signed `instance`, settings-form token) without verifying anything and
+  forwards; the object verifies.
+- Storage seam: `src/db.ts` now exposes a synchronous `SqlDb {prepare().get/all/
+  run, exec}` with `setDefaultDb()` (Node singleton) and `withDb()`
+  (AsyncLocalStorage-scoped, per DO request). Callers unchanged. DO SqlStorage
+  is adapted in worker.ts (`exec(...).toArray()`).
+- Runtime shims: master key = `UCP_MASTER_KEY` else Node file fallback
+  (registered by db-node.ts); seeds = parsed configs passed in (Node reads
+  config/, Worker bundles the three dev tenants and seeds only when
+  `SEED_DEV_TENANTS=1`); StubAdapter fixtures via JSON import; SSRF guard skips
+  DNS on Workers (`IS_WORKERS` via navigator.userAgent); `process.env`
+  populated by `nodejs_compat_populate_process_env`. `node:crypto` (AES-GCM,
+  HMAC, RSA verify) runs unchanged on Workers.
+- Verified: typecheck clean; Node path unchanged — `smoke` green, BC install
+  15/15, Wix install 14/14, Node server serving the live Wix tenant. Worker
+  path under `wrangler dev` (.dev.vars from `.dev.vars.example`, mocks as
+  upstreams): stub checkout create -> discount -> complete persisted across
+  requests in the DO; BigCommerce install (`/bigcommerce/auth`) provisioned
+  hooks + page on the mock and `/cfstore/.well-known/ucp` 200; Wix install via
+  a mock-signed `AppInstalled` webhook created the instance object, profile
+  200; **conformance vs `http://localhost:8797/wix-dev` (Worker + DO + mock
+  Wix): 75 passed / 2 skipped**, no errors in the Worker log.
+- Deploy: `wrangler.jsonc` at repo root (vars PUBLIC_BASE_URL/BC_CLIENT_ID/
+  WIX_APP_ID; secrets UCP_MASTER_KEY/BC_CLIENT_SECRET/WIX_APP_SECRET/
+  WIX_APP_PUBLIC_KEY), `npm run deploy`. Needs `wrangler login` or
+  CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID (user action). Tenant rows do
+  not migrate from the Node SQLite file: installed apps re-create tenants on
+  the next webhook/dashboard open; Stripe keys must be re-entered.
+
 ## Wix — single payment line per order (2026-09-07, uncommitted)
 
 - Wix attaches a PENDING gateway placeholder payment (`regularPaymentDetails.

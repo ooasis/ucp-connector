@@ -4,9 +4,7 @@
  * fixture data from config/fixtures.json for conformance/dev use.
  */
 
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import fixturesJson from '../config/fixtures.json' with { type: 'json' };
 import { BigCommerceAdapter } from './adapters/bigcommerce.js';
 import { WixAdapter } from './adapters/wix.js';
 import type { Tenant } from './tenants.js';
@@ -85,14 +83,12 @@ type Fixtures = {
   freeShipping: { minSubtotal: number | null; eligibleItemIds: string[] };
 };
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-
 export class StubAdapter implements PlatformAdapter {
   private fixtures: Fixtures;
   private orderSeq = 0;
 
-  constructor(fixturesPath = join(ROOT, 'config', 'fixtures.json')) {
-    this.fixtures = JSON.parse(readFileSync(fixturesPath, 'utf8'));
+  constructor(fixtures: Fixtures = fixturesJson as unknown as Fixtures) {
+    this.fixtures = fixtures;
   }
 
   async getItem(_tenant: Tenant, itemId: string): Promise<CatalogItem | null> {

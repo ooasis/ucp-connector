@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ucp-connector",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-15",
+  // Shared code reads process.env; populate it from vars + secrets.
+  "compatibility_flags": ["nodejs_compat_populate_process_env"],
+  "durable_objects": {
+    "bindings": [{ "name": "TENANT", "class_name": "TenantObject" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TenantObject"] }],
+  "observability": { "enabled": true },
+  // Non-secret config. Secrets (UCP_MASTER_KEY, BC_CLIENT_SECRET, WIX_APP_SECRET,
+  // WIX_APP_PUBLIC_KEY) are set with `wrangler secret put`; see README.
+  "vars": {
+    "PUBLIC_BASE_URL": "",
+    "BC_CLIENT_ID": "",
+    "WIX_APP_ID": ""
+  }
+}
