@@ -166,3 +166,12 @@ never talks to a platform directly.
 - Response signing is not implemented (parity with Magento/Woo, which passed
   conformance without it).
 
+## License
+
+Licensed under the [PolyForm Shield License 1.0.0](LICENSE).
+
+In short: you may use, modify and run this connector for any stores you own or operate, for
+free, including commercial stores. You may not use it to build, sell or offer a product or
+service that competes with it, and any copy you pass on must keep the license and the copyright
+notice. See the LICENSE file for the exact terms. Versions before the relicense commit were
+published under MIT.
