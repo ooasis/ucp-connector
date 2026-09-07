@@ -208,6 +208,12 @@ Item ids on Wix sites are Catalog V3 product ids, or `productId:variantId` for a
 specific variant; sites still on Catalog V1 are detected (HTTP 428) and served
 through the V1 product API.
 
+Fixtures on a real site: `npx tsx --env-file=.env scripts/wix-seed.ts <instanceId>`
+creates the flower-shop products (with inventory), coupons and contacts, and
+writes a live conformance config under `config/live/<instanceId>/`. Note that
+Wix caps unpublished apps at 5 order creations per hour per site, so the full
+suite (about 20 completions) only passes end to end once the app is listed.
+
 The merchant-domain `/.well-known/ucp` is not solved by the app: Wix cannot
 serve root files, so the dashboard tells the merchant to front the site
 (Cloudflare Worker or proxy rule) and reports whether that is live.

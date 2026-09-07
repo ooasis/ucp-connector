@@ -85,18 +85,27 @@ export async function wix(
     Accept: 'application/json',
   };
   if (cfg.wixSiteId) headers['wix-site-id'] = cfg.wixSiteId;
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
-    });
-  } catch (e: any) {
-    throw new UcpError(502, 'INTERNAL_ERROR', `Wix unreachable: ${e?.message ?? e}`);
+  // Wix rate-limits per app instance (429); one short retry covers bursts
+  // without blowing the caller's timeout budget.
+  for (let attempt = 0; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (e: any) {
+      throw new UcpError(502, 'INTERNAL_ERROR', `Wix unreachable: ${e?.message ?? e}`);
+    }
+    if (res.status === 429 && attempt < 1) {
+      const wait = Math.min(Number(res.headers.get('retry-after')) * 1000 || 1000, 2000);
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+    return [res.status, await res.json().catch(() => null)];
   }
-  return [res.status, await res.json().catch(() => null)];
 }
 
 /** UCP destination -> Wix address (subdivision is ISO 3166-2, e.g. US-IL). */
@@ -139,6 +148,23 @@ function carrierOptions(checkout: any): ShippingOption[] {
 
 /** Sites that answered 428 to a V3 call: use Catalog V1 for them from then on. */
 const catalogV1Sites = new Set<string>();
+
+/**
+ * Checkouts created for shipping quotes, reused by createOrder for the same
+ * items + destination so completion needs 3 Wix calls instead of 6 (real Wix
+ * takes ~1 s per call; agents time out around 5 s). Wix checkouts live
+ * server-side until they expire, so a stale entry just falls back to a fresh one.
+ * ponytail: in-process map — move to the session doc if the connector is ever
+ * scaled to more than one node.
+ */
+const quoteCheckouts = new Map<string, { id: string; at: number }>();
+const QUOTE_TTL_MS = 30 * 60 * 1000;
+
+function quoteKey(tenant: Tenant, items: CartLine[], destination: Destination): string {
+  const lines = [...items].sort((a, b) => a.id.localeCompare(b.id)).map((i) => `${i.id}x${i.quantity}`);
+  const addr = wixAddress(destination);
+  return `${tenant.id}|${lines.join(',')}|${addr.country}|${addr.subdivision ?? ''}|${addr.city}|${addr.postalCode}|${addr.addressLine}`;
+}
 
 /** `productId` or `productId:variantId` -> catalogReference for eCom line items. */
 function catalogReference(itemId: string): any {
@@ -246,15 +272,21 @@ export class WixAdapter implements PlatformAdapter {
         shippingDestination: { address: wixAddress(destination), contactDetails: contactDetails(destination) },
       },
     });
+    quoteCheckouts.set(quoteKey(tenant, items, destination), { id: checkout.id, at: Date.now() });
     return carrierOptions(updated);
   }
 
   async validateDiscount(tenant: Tenant, code: string): Promise<Discount | null> {
-    const [status, body] = await wix(tenant, 'POST', '/stores/v2/coupons/query', {
-      query: { filter: JSON.stringify({ code }) },
-    });
-    if (status >= 400) return null;
-    const spec = body?.coupons?.[0]?.specification;
+    // Wix's coupon filter is exact-match; UCP codes are case-insensitive.
+    let spec: any = null;
+    for (const variant of [...new Set([code, code.toUpperCase(), code.toLowerCase()])]) {
+      const [status, body] = await wix(tenant, 'POST', '/stores/v2/coupons/query', {
+        query: { filter: JSON.stringify({ code: variant }) },
+      });
+      if (status >= 400) return null;
+      spec = body?.coupons?.[0]?.specification;
+      if (spec) break;
+    }
     if (!spec || spec.active === false) return null;
     if (spec.percentOffRate != null) {
       return { code: spec.code, title: spec.name, type: 'percentage', value: Number(spec.percentOffRate) };
@@ -292,11 +324,7 @@ export class WixAdapter implements PlatformAdapter {
     orderUuid: string,
     transactionId: string | null,
   ): Promise<string> {
-    const checkout = await this.createCheckout(
-      tenant,
-      doc.line_items.map((li: any) => ({ id: li.item.id, quantity: li.quantity })),
-    );
-
+    const items: CartLine[] = doc.line_items.map((li: any) => ({ id: li.item.id, quantity: li.quantity }));
     const method = (doc.fulfillment?.methods ?? []).find((m: any) => m.selected_destination_id);
     const dest = (method?.destinations ?? []).find(
       (d: any) => d.id === method.selected_destination_id,
@@ -304,32 +332,65 @@ export class WixAdapter implements PlatformAdapter {
     if (!dest) throw new UcpError(400, 'INVALID_REQUEST', 'No fulfillment destination selected');
     const address = wixAddress(dest);
     const contact = contactDetails(dest, doc.buyer);
-
-    // Update 1: buyer + addresses + coupon. Wix checkouts hold ONE coupon code;
-    // apply the first (the UCP totals already charged are authoritative anyway).
-    const applied = doc.discounts?.applied ?? [];
-    const withDest = await this.updateCheckout(tenant, checkout.id, {
-      buyerInfo: doc.buyer?.email ? { email: doc.buyer.email } : undefined,
-      billingInfo: { address, contactDetails: contact },
-      shippingInfo: { shippingDestination: { address, contactDetails: contact } },
-      couponCode: applied[0]?.code,
-    });
-
-    // Update 2: selected carrier option — match by code, then title, then cheapest.
     const group = (method?.groups ?? []).find((g: any) => g.selected_option_id);
     const chosen = (group?.options ?? []).find((o: any) => o.id === group.selected_option_id);
-    const available = carrierOptions(withDest).sort((a, b) => a.amount - b.amount);
-    const option =
-      available.find((o) => o.id === group?.selected_option_id) ??
-      available.find((o) => o.title === chosen?.title) ??
-      available[0];
-    if (option) {
-      await this.updateCheckout(tenant, checkout.id, {
-        shippingInfo: { selectedCarrierServiceOption: { code: option.id, title: option.title } },
+    // Wix checkouts hold ONE coupon code; apply the first (the UCP totals
+    // already charged are authoritative anyway).
+    const applied = doc.discounts?.applied ?? [];
+    const buyerPatch = {
+      buyerInfo: doc.buyer?.email ? { email: doc.buyer.email } : undefined,
+      billingInfo: { address, contactDetails: contact },
+      couponCode: applied[0]?.code,
+    };
+    const pickOption = (checkout: any) => {
+      const available = carrierOptions(checkout).sort((a, b) => a.amount - b.amount);
+      return (
+        available.find((o) => o.id === group?.selected_option_id) ??
+        available.find((o) => o.title === chosen?.title) ??
+        available[0]
+      );
+    };
+
+    // Reuse the quote checkout (already carries items + destination + carrier
+    // options): one PATCH with buyer, billing, coupon and the selected option.
+    const key = quoteKey(tenant, items, dest);
+    const quoted = quoteCheckouts.get(key);
+    quoteCheckouts.delete(key);
+    let checkoutId: string | null = null;
+    if (quoted && Date.now() - quoted.at < QUOTE_TTL_MS) {
+      try {
+        const [, current] = await wix(tenant, 'GET', `/ecom/v1/checkouts/${quoted.id}`);
+        const option = current?.checkout && !current.checkout.completed ? pickOption(current.checkout) : null;
+        if (option) {
+          await this.updateCheckout(tenant, quoted.id, {
+            ...buyerPatch,
+            shippingInfo: {
+              shippingDestination: { address, contactDetails: contact },
+              selectedCarrierServiceOption: { code: option.id, title: option.title },
+            },
+          });
+          checkoutId = quoted.id;
+        }
+      } catch {
+        checkoutId = null; // stale/expired quote: fall through to a fresh checkout
+      }
+    }
+    if (!checkoutId) {
+      const checkout = await this.createCheckout(tenant, items);
+      const withDest = await this.updateCheckout(tenant, checkout.id, {
+        ...buyerPatch,
+        shippingInfo: { shippingDestination: { address, contactDetails: contact } },
       });
+      const option = pickOption(withDest);
+      if (option) {
+        await this.updateCheckout(tenant, checkout.id, {
+          shippingInfo: { selectedCarrierServiceOption: { code: option.id, title: option.title } },
+        });
+      }
+      checkoutId = checkout.id;
     }
 
-    const [os, order] = await wix(tenant, 'POST', `/ecom/v1/checkouts/${checkout.id}/create-order`);
+    const [os, order] = await wix(tenant, 'POST', `/ecom/v1/checkouts/${checkoutId}/create-order`);
     const orderId = order?.orderId;
     if (os >= 400 || !orderId) {
       throw new UcpError(502, 'INTERNAL_ERROR', `Wix order creation failed (HTTP ${os}${wixMessage(order)})`);
@@ -354,14 +415,8 @@ export class WixAdapter implements PlatformAdapter {
       throw new UcpError(502, 'INTERNAL_ERROR', `Wix add-payments failed (HTTP ${ps}${wixMessage(pay)})`);
     }
 
-    // paymentStatus recalculates async — poll until PAID before reporting.
-    for (let i = 0; i < 5; i++) {
-      const [, o] = await wix(tenant, 'GET', `/ecom/v1/orders/${orderId}`);
-      if (o?.order?.paymentStatus === 'PAID') break;
-      await new Promise((r) => setTimeout(r, 200));
-    }
-    // ponytail: if still not PAID after ~1s we return anyway — the Stripe
-    // charge is captured and authoritative; alert on stuck orders when real.
+    // paymentStatus recalculates asynchronously on Wix's side; the Stripe
+    // charge is captured and authoritative, so we do not wait for it.
     return String(orderId);
   }
 }

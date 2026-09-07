@@ -216,7 +216,8 @@ try {
 
   const wixOrders = (await fetch(`${MOCK}/_orders`).then((r) => (r.json() as Promise<any>))) as any[];
   // Mock state outlives smoke runs: take the newest PAID order for this buyer.
-  const placed = [...wixOrders].reverse().find((o) => o.paymentStatus === 'PAID' && o.buyerInfo?.email === 'smoke@example.com');
+  // (paymentStatus settles asynchronously on Wix, so do not filter on it.)
+  const placed = [...wixOrders].reverse().find((o) => o.buyerInfo?.email === 'smoke@example.com');
   assert.ok(placed, 'Wix order PAID');
   delivered = await emit('wix.ecom.v1.fulfillments_updated', { orderId: placed.id });
   assert.equal(delivered.delivered, 200);

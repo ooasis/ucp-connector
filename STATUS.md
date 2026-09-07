@@ -5,6 +5,44 @@ Wix (each against a local mock) verified: conformance GREEN on ALL THREE
 tenants — 75 passed / 2 skipped each (identical bar to Magento). BigCommerce
 AND Wix plan phase 5 (app shells) built and verified against the mocks (below).*
 
+## Wix — live conformance + fixtures (2026-09-07, uncommitted)
+
+- `scripts/wix-seed.ts <tenantId>` seeds the flower-shop fixtures on a real
+  site (Catalog V3 products by SKU + inventory items — Create Product does
+  NOT create inventory, `POST /stores/v3/inventory-items` does; Coupons V2;
+  Contacts V4) and writes `config/live/<tenantId>/{conformance_input,
+  test_fixtures}.json` with the real product ids and the carrier option codes
+  quoted for the two fixture destinations. Needs Manage Products / Manage
+  Coupons / Manage Contacts scopes (Wix grants take effect immediately; a few
+  creates 403'd mid-run right after the grant and succeeded on rerun).
+- Shipping rules ARE manageable by API (Delivery Profiles + Shipping Options,
+  `/ecom/v1/delivery-profiles/query`, `/ecom/v1/shipping-options/query`); the
+  merchant's dashboard config (Domestic US+CA: $5 flat, $0 when total >= $100;
+  International: free) was read back and is what the quotes return.
+- **Live conformance vs the real site: 49 passed / 2 skipped / 26 failed —
+  every failure is an order completion**, blocked by a documented Wix limit:
+  *apps not yet published in the App Market may create at most 5 orders per
+  hour per site* (`RATE_LIMITED` 429 from `checkout:CreateOrder` after the
+  first few completions of a run; the same cap is documented on Create
+  Order). Completion itself is proven (orders #10001–#10006). The 26 tests are
+  the ap2/binding/card completion tests, checkout lifecycle after complete,
+  idempotent complete, adjustments, order retrieval/update/fulfillment,
+  simulate-shipping, and all webhook tests. Lifting the cap = App Market
+  listing.
+- Fixes from the live run: coupon codes are case-insensitive in UCP but
+  Wix's coupon filter is exact — `validateDiscount` now retries
+  upper/lower case (fixes `test_code_matches_case_insensitively`).
+  Completion was 7.4 s on real Wix (6 sequential calls + poll) against the
+  suite's 5 s client timeout: `createOrder` now reuses the checkout created
+  for the shipping quote (in-process cache keyed by tenant+items+destination,
+  30 min TTL, falls back to a fresh checkout) so completion is
+  GET + PATCH + create-order + add-payment, and the paymentStatus poll is
+  gone. `wix()` retries once on 429 (Retry-After, max 2 s). Not yet timed on
+  the live site because the order cap was already exhausted — re-time after
+  the hour resets (expect ~3–4 s).
+- Wix per-instance rate limit also bit during the suite (429s on other calls
+  were not seen; only create-order).
+
 ## Wix — verified on a REAL dev site (2026-09-07, uncommitted)
 
 The user created a Wix dev site ("UCP Store", Catalog V3, template products)

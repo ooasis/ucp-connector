@@ -315,6 +315,12 @@ app.post('/ecom/v1/checkouts', async (c) => {
   return c.json({ checkout }, 201);
 });
 
+app.get('/ecom/v1/checkouts/:id', (c) => {
+  const checkout = checkouts.get(c.req.param('id'));
+  if (!checkout) return wixError(c, 404, 'Checkout not found', 'NOT_FOUND');
+  return c.json({ checkout });
+});
+
 app.patch('/ecom/v1/checkouts/:id', async (c) => {
   const checkout = checkouts.get(c.req.param('id'));
   if (!checkout) return wixError(c, 404, 'Checkout not found', 'NOT_FOUND');
