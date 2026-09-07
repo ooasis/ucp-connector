@@ -35,12 +35,21 @@ AND Wix plan phase 5 (app shells) built and verified against the mocks (below).*
   a mock-signed `AppInstalled` webhook created the instance object, profile
   200; **conformance vs `http://localhost:8797/wix-dev` (Worker + DO + mock
   Wix): 75 passed / 2 skipped**, no errors in the Worker log.
-- Deploy: `wrangler.jsonc` at repo root (vars PUBLIC_BASE_URL/BC_CLIENT_ID/
-  WIX_APP_ID; secrets UCP_MASTER_KEY/BC_CLIENT_SECRET/WIX_APP_SECRET/
-  WIX_APP_PUBLIC_KEY), `npm run deploy`. Needs `wrangler login` or
-  CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID (user action). Tenant rows do
-  not migrate from the Node SQLite file: installed apps re-create tenants on
-  the next webhook/dashboard open; Stripe keys must be re-entered.
+- **Deployed 2026-09-07**: `https://ucp-connector.videoss.workers.dev`
+  (account Sunh11373@yahoo.com, wrangler was already logged in). All config
+  is secrets (`wrangler.jsonc` has no vars): UCP_MASTER_KEY (fresh random),
+  PUBLIC_BASE_URL, WIX_APP_ID, WIX_APP_SECRET, WIX_APP_PUBLIC_KEY — piped from
+  the local .env; BC_CLIENT_ID/SECRET not set yet (no BigCommerce app).
+  Live checks: /healthz 200, unknown tenant 404, dashboard with a bad
+  signature 401, BigCommerce load with a bad JWT 401; a webhook signed with
+  the MOCK key is rejected (no tenant created). Note: an unsigned/garbage
+  webhook body gets 404 from the router (no instanceId to route on) rather
+  than the object's 403 — Wix only needs a 2xx for good deliveries.
+- Cut-over still to do (user): change the Wix Dev Center URLs (webhooks,
+  dashboard page, OAuth URLs) from the ngrok tunnel to the workers.dev origin,
+  reopen the app on the site (creates the tenant object via the signed
+  instance), re-enter the simulation secret / Stripe key on the dashboard.
+  Tenant rows do not migrate from the Node SQLite file.
 
 ## Wix — single payment line per order (2026-09-07, uncommitted)
 

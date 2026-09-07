@@ -179,17 +179,19 @@ payloads, form tokens) and forwards; all verification happens in the object.
 
 ```sh
 npx wrangler login
-# non-secret vars live in wrangler.jsonc (PUBLIC_BASE_URL, BC_CLIENT_ID, WIX_APP_ID)
+npm run deploy                                # -> https://ucp-connector.<account>.workers.dev
+# then the config, all as secrets (a `wrangler secret put` prompts for the value):
 npx wrangler secret put UCP_MASTER_KEY        # 32-byte hex, e.g. openssl rand -hex 32
-npx wrangler secret put BC_CLIENT_SECRET
+npx wrangler secret put PUBLIC_BASE_URL       # the deployed origin (optional; defaults to the request origin)
+npx wrangler secret put WIX_APP_ID
 npx wrangler secret put WIX_APP_SECRET
 npx wrangler secret put WIX_APP_PUBLIC_KEY < wix-public-key.pem
-npm run deploy                                # -> https://ucp-connector.<account>.workers.dev
+npx wrangler secret put BC_CLIENT_ID
+npx wrangler secret put BC_CLIENT_SECRET
 ```
 
-Set `PUBLIC_BASE_URL` in `wrangler.jsonc` to the deployed origin (workers.dev
-URL or a custom domain) and point the Wix / BigCommerce app callback URLs at
-it. Tenants are created by the install flows; there is no seeding in
+Then point the Wix / BigCommerce app callback URLs at the deployed origin
+(`/wix/webhooks`, `/wix/dashboard`, `/bigcommerce/{auth,load,uninstall}`). Tenants are created by the install flows; there is no seeding in
 production. Existing merchants re-enter Stripe keys on the dashboard page
 (tenant rows do not migrate from the Node SQLite file).
 

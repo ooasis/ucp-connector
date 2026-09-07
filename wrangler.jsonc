@@ -10,11 +10,8 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TenantObject"] }],
   "observability": { "enabled": true },
-  // Non-secret config. Secrets (UCP_MASTER_KEY, BC_CLIENT_SECRET, WIX_APP_SECRET,
-  // WIX_APP_PUBLIC_KEY) are set with `wrangler secret put`; see README.
-  "vars": {
-    "PUBLIC_BASE_URL": "",
-    "BC_CLIENT_ID": "",
-    "WIX_APP_ID": ""
-  }
+  // All app config is set with `wrangler secret put` (see README): UCP_MASTER_KEY,
+  // BC_CLIENT_ID, BC_CLIENT_SECRET, WIX_APP_ID, WIX_APP_SECRET, WIX_APP_PUBLIC_KEY,
+  // and optionally PUBLIC_BASE_URL (defaults to the request origin).
+  "vars": {}
 }
