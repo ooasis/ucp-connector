@@ -102,7 +102,9 @@ async function tenantIdFor(request: Request): Promise<string | null> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (new URL(request.url).pathname === '/healthz') return Response.json({ ok: true });
+    const path = new URL(request.url).pathname;
+    if (path === '/healthz') return Response.json({ ok: true });
+    if (path.startsWith('/legal/')) return app.fetch(request); // static pages, no tenant storage
     const tenantId = await tenantIdFor(request);
     if (!tenantId) return Response.json({ error: 'unknown tenant' }, { status: 404 });
     return env.TENANT.get(env.TENANT.idFromName(tenantId)).fetch(request);

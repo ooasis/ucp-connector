@@ -124,7 +124,14 @@ function page(c: Context, tenant: Tenant, notice: string, provisioned: Provision
   ];
   if (provisioned) rows.push(['Webhooks', provisioned.webhooks], ['Profile page', provisioned.profile]);
   return c.html(
-    settingsPage({ tenant, token: sessionToken(env('BC_CLIENT_SECRET'), tenant.id), notice, rows }),
+    settingsPage({
+      tenant,
+      token: sessionToken(env('BC_CLIENT_SECRET'), tenant.id),
+      notice,
+      rows,
+      platform: 'BigCommerce',
+      steps: ['Profile on your storefront: installed automatically as a page at /.well-known/ucp (see the status row); saving settings republishes it.'],
+    }),
   );
 }
 

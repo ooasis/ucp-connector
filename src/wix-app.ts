@@ -25,6 +25,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { raw } from 'hono/html';
 import { verifyWixWebhookJwt, wix } from './adapters/wix.js';
 import {
   sessionToken,
@@ -152,7 +153,16 @@ async function page(c: Context, tenant: Tenant, notice: string) {
     ['Webhook sink', `${tenant.baseUrl.replace(/\/[^/]+$/, '')}/wix/webhooks (configured in the app dashboard)`],
   ];
   return c.html(
-    settingsPage({ tenant, token: sessionToken(env('WIX_APP_SECRET'), tenant.id), notice, rows }),
+    settingsPage({
+      tenant,
+      token: sessionToken(env('WIX_APP_SECRET'), tenant.id),
+      notice,
+      rows,
+      platform: 'Wix',
+      steps: [
+        'Publish the profile on your domain: Wix cannot serve files at the site root, so add the small Cloudflare Worker from the documentation that answers <code>/.well-known/ucp</code> on your domain with the hosted profile. The status row shows when agents can find it.',
+      ].map((s) => raw(s)),
+    }),
   );
 }
 

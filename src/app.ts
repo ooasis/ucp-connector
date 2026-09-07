@@ -30,6 +30,7 @@ import { dispatch, type UcpOp, type UcpRequest } from './dispatcher.js';
 import { markShipped, pushOrderUpdated, simulateShipping } from './orders.js';
 import { businessProfile } from './profile.js';
 import { tenantFor, type Tenant } from './tenants.js';
+import { legalApp } from './legal.js';
 import { handleWixEcomEvent, wixApp } from './wix-app.js';
 
 const app = new Hono();
@@ -177,6 +178,7 @@ app.post('/:tenant/acp/checkout_sessions/:id/cancel', acpRoute('cancel', true));
 
 app.route('/bigcommerce', bigcommerceApp);
 app.route('/wix', wixApp);
+app.route('/legal', legalApp);
 
 app.get('/healthz', (c) => c.json({ ok: true }));
 

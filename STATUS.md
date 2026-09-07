@@ -5,6 +5,28 @@ Wix (each against a local mock) verified: conformance GREEN on ALL THREE
 tenants — 75 passed / 2 skipped each (identical bar to Magento). BigCommerce
 AND Wix plan phase 5 (app shells) built and verified against the mocks (below).*
 
+## App Market submission prep (2026-09-07, uncommitted)
+
+- Checklist from Wix docs (App Market guidelines, common rejection reasons,
+  listing/media specs): review-ready dashboard (first-install clarity, setup
+  guidance, >=1200 px, no JS alerts), privacy policy + terms URLs, least
+  privilege permissions, listing (name/teaser/prose description/keywords/
+  Wix Stores as required product/5–6 images at 1200x900 4:3/icon), Security &
+  Privacy questionnaire, pricing (Free), review notes + demo site, release a
+  version, then "Submit & Publish" (automated AI review, blockers loop).
+- Done: dashboard page rewritten (`app-settings.ts`): what the app does,
+  numbered setup steps with done/to-do pills (Stripe, `.well-known`, test),
+  status table, settings form, footer with Documentation / Support (from
+  `SUPPORT_EMAIL`) / Privacy / Terms; full-width (max 1200 px), responsive,
+  no JS. Privacy policy + terms served by the connector at `/legal/privacy`
+  and `/legal/terms` (`src/legal.ts`; operator name from `OPERATOR_NAME`,
+  contact from `SUPPORT_EMAIL`; Worker serves them without a tenant object).
+  Deployed; screenshot `marketing/wix/screenshot-dashboard-1280.png`.
+- To do: set `SUPPORT_EMAIL` (and optionally `OPERATOR_NAME`) as Worker
+  secrets; trim Dev Center permissions (drop Manage Products / Manage
+  Contacts; coupons read-only); listing copy + 5–6 images; S&P answers;
+  review notes; release version; submit.
+
 ## Cloudflare cut-over + coupon fix (2026-09-07, uncommitted)
 
 - User repointed the Wix Dev Center URLs to `https://ucp-connector.videoss.
