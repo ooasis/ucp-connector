@@ -22,10 +22,17 @@ AND Wix plan phase 5 (app shells) built and verified against the mocks (below).*
   and `/legal/terms` (`src/legal.ts`; operator name from `OPERATOR_NAME`,
   contact from `SUPPORT_EMAIL`; Worker serves them without a tenant object).
   Deployed; screenshot `marketing/wix/screenshot-dashboard-1280.png`.
-- To do: set `SUPPORT_EMAIL` (and optionally `OPERATOR_NAME`) as Worker
-  secrets; trim Dev Center permissions (drop Manage Products / Manage
-  Contacts; coupons read-only); listing copy + 5–6 images; S&P answers;
-  review notes; release version; submit.
+- Also done: `SUPPORT_EMAIL` secret set (sunh11373@yahoo.com, shown in the
+  footer and legal pages); `scripts/agent-checkout.ts` (acts as a UCP agent:
+  create -> option -> coupon -> pay; referenced from the review notes);
+  submission pack `ucp/marketing/wix/wix-app-market-listing.md` (listing copy,
+  audience, permissions table, media plan, review notes, S&P answers, human
+  steps); listing images at 1200x900: `listing-hero.png`, `listing-flow.png`,
+  `listing-profile.png`, `listing-dashboard.png` (HTML sources in
+  `marketing/wix/media-src/`, rendered with headless Chrome).
+- Remaining (user): trim Dev Center permissions (drop Manage Products /
+  Manage Contacts; coupons read-only), two Wix Orders screenshots for the
+  listing, paste listing + answers, release the version, Submit & Publish.
 
 ## Cloudflare cut-over + coupon fix (2026-09-07, uncommitted)
 
