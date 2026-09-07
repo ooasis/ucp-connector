@@ -33,7 +33,7 @@ type BcProduct = {
 /** Minor units from a BigCommerce dollar amount. */
 const cents = (dollars: number | string): number => Math.round(Number(dollars) * 100);
 
-async function bc(
+export async function bc(
   tenant: Tenant,
   method: string,
   path: string,

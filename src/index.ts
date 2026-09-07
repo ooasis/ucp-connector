@@ -14,6 +14,7 @@
  *   POST /{t}/testing/simulate-shipping/{order_id}     conformance hook (Simulation-Secret)
  *   POST /{t}/acp/checkout_sessions                    ACP create (Bearer key)
  *   GET/POST /{t}/acp/checkout_sessions/{id}[...]      ACP get/update/complete/cancel
+ *   /bigcommerce/{auth,load,uninstall,settings}        BigCommerce app shell (bigcommerce-app.ts)
  */
 
 import { serve } from '@hono/node-server';
@@ -22,24 +23,19 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import * as acp from './acp.js';
 import { verifyWixWebhookJwt } from './adapters/wix.js';
+import { bigcommerceApp } from './bigcommerce-app.js';
 import { orderIdByPlatformRef } from './db.js';
 import { dispatch, type UcpOp, type UcpRequest } from './dispatcher.js';
 import { markShipped, pushOrderUpdated, simulateShipping } from './orders.js';
 import { businessProfile } from './profile.js';
-import { loadTenantConfig, seedTenants, type Tenant } from './tenants.js';
+import { seedTenants, tenantFor, type Tenant } from './tenants.js';
 
 seedTenants();
 
 const app = new Hono();
 
 function tenantFrom(c: Context): Tenant | null {
-  const id = c.req.param('tenant') ?? '';
-  const config = loadTenantConfig(id);
-  if (!config) return null;
-  const url = new URL(c.req.url);
-  const proto = c.req.header('x-forwarded-proto') ?? url.protocol.replace(':', '');
-  const host = c.req.header('x-forwarded-host') ?? c.req.header('host') ?? url.host;
-  return { id, config, baseUrl: `${proto}://${host}/${id}` };
+  return tenantFor(c, c.req.param('tenant') ?? '');
 }
 
 async function ucpRequest(c: Context): Promise<UcpRequest> {
@@ -121,8 +117,8 @@ app.post('/:tenant/testing/simulate-shipping/:orderId', async (c) => {
 
 // -- BigCommerce store webhooks -> UCP order webhooks ---------------------------------
 
-// Registered on the store with a custom X-Webhook-Secret header (plan phase 5;
-// until then, curl-simulated). Always 2xx so BigCommerce keeps the hook alive.
+// Registered on install with a custom X-Webhook-Secret header (bigcommerce-app.ts).
+// Always 2xx so BigCommerce keeps the hook alive.
 app.post('/:tenant/bigcommerce/webhooks', async (c) => {
   const tenant = tenantFrom(c);
   if (!tenant) return notFound(c);
@@ -185,6 +181,8 @@ app.get('/:tenant/acp/checkout_sessions/:id', acpRoute('get', true));
 app.post('/:tenant/acp/checkout_sessions/:id', acpRoute('update', true));
 app.post('/:tenant/acp/checkout_sessions/:id/complete', acpRoute('complete', true));
 app.post('/:tenant/acp/checkout_sessions/:id/cancel', acpRoute('cancel', true));
+
+app.route('/bigcommerce', bigcommerceApp);
 
 app.get('/healthz', (c) => c.json({ ok: true }));
 

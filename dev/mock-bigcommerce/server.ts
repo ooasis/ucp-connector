@@ -6,7 +6,11 @@
  * the bigcommerce-dev tenant behaves exactly like the stub `dev` tenant.
  *
  * State is in-memory; auth is a fixed X-Auth-Token (BC_MOCK_TOKEN, default
- * "mock-token"). Debug: GET /_orders dumps the V2 order store.
+ * "mock-token"). App-shell endpoints (plan phase 5): POST /oauth2/token
+ * (client id/secret BC_MOCK_CLIENT_ID/SECRET, default mock-client-id /
+ * mock-client-secret, returns the fixed token), GET /v2/store, Webhooks V3
+ * (/v3/hooks), Pages V3 (/v3/content/pages). Debug: GET /_orders, /_hooks,
+ * /_pages; GET /_storefront/{hash}{url} serves a pushed page body.
  */
 
 import { serve } from '@hono/node-server';
@@ -20,6 +24,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const fixtures = JSON.parse(readFileSync(join(ROOT, 'config', 'fixtures.json'), 'utf8'));
 const TOKEN = process.env.BC_MOCK_TOKEN ?? 'mock-token';
+const CLIENT_ID = process.env.BC_MOCK_CLIENT_ID ?? 'mock-client-id';
+const CLIENT_SECRET = process.env.BC_MOCK_CLIENT_SECRET ?? 'mock-client-secret';
 
 // -- seed: flower-shop fixtures -> BigCommerce entities -------------------------
 
@@ -164,6 +170,114 @@ const app = new Hono();
 app.use('/stores/*', async (c, next) => {
   if (c.req.header('x-auth-token') !== TOKEN) return v3Error(c, 401, 'Unauthorized');
   await next();
+});
+
+// -- OAuth (login.bigcommerce.com/oauth2/token) -------------------------------------
+
+app.post('/oauth2/token', async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  if (
+    b.client_id !== CLIENT_ID ||
+    b.client_secret !== CLIENT_SECRET ||
+    b.grant_type !== 'authorization_code' ||
+    !b.code ||
+    !/^stores\/[A-Za-z0-9]+$/.test(String(b.context ?? ''))
+  ) {
+    return c.json({ error: 'Invalid client or authorization code' }, 400);
+  }
+  const user = { id: 1, username: 'owner@example.com', email: 'owner@example.com' };
+  return c.json({
+    access_token: TOKEN,
+    scope: b.scope ?? '',
+    user,
+    owner: user,
+    context: b.context,
+    account_uuid: 'mock-account-uuid',
+  });
+});
+
+// -- Store information V2 -------------------------------------------------------------
+
+app.get('/stores/:hash/v2/store', (c) => {
+  const hash = c.req.param('hash');
+  return c.json({
+    id: hash,
+    name: 'Mock BC Flower Shop',
+    currency: 'USD',
+    domain: `${hash}.mybigcommerce.test`,
+    secure_url: `https://${hash}.mybigcommerce.test`,
+  });
+});
+
+// -- Webhooks V3 ------------------------------------------------------------------------
+
+const hooks = new Map<number, any>();
+let hookSeq = 1;
+
+app.get('/stores/:hash/v3/hooks', (c) => {
+  const hash = c.req.param('hash');
+  return data(c, [...hooks.values()].filter((h) => h.store_hash === hash));
+});
+
+app.post('/stores/:hash/v3/hooks', async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  if (!b.scope || !b.destination) return v3Error(c, 422, 'scope and destination are required');
+  const now = Math.floor(Date.now() / 1000);
+  const hook = {
+    id: hookSeq++,
+    client_id: CLIENT_ID,
+    store_hash: c.req.param('hash'),
+    scope: b.scope,
+    destination: b.destination,
+    is_active: b.is_active ?? true,
+    headers: b.headers ?? {},
+    created_at: now,
+    updated_at: now,
+  };
+  hooks.set(hook.id, hook);
+  return data(c, hook, 201);
+});
+
+// -- Pages V3 ------------------------------------------------------------------------------
+
+const pages = new Map<number, any>();
+let pageSeq = 1;
+
+app.get('/stores/:hash/v3/content/pages', (c) => {
+  const hash = c.req.param('hash');
+  return data(c, [...pages.values()].filter((p) => p.store_hash === hash));
+});
+
+function pageFrom(body: any, hash: string, id: number): any {
+  return {
+    id,
+    store_hash: hash,
+    name: body.name,
+    type: body.type,
+    body: body.body ?? '',
+    url: body.url,
+    is_visible: body.is_visible ?? true,
+    is_homepage: false,
+    channel_id: 1,
+  };
+}
+
+app.post('/stores/:hash/v3/content/pages', async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  if (!b.name || !b.type || !String(b.url ?? '').startsWith('/')) {
+    return v3Error(c, 422, 'name, type and a url starting with / are required');
+  }
+  const page = pageFrom(b, c.req.param('hash'), pageSeq++);
+  pages.set(page.id, page);
+  return data(c, page, 201);
+});
+
+app.put('/stores/:hash/v3/content/pages/:id', async (c) => {
+  const page = pages.get(Number(c.req.param('id')));
+  if (!page || page.store_hash !== c.req.param('hash')) return v3Error(c, 404, 'Page not found');
+  const b = await c.req.json().catch(() => ({}));
+  pages.set(page.id, pageFrom({ ...page, ...b }, page.store_hash, page.id));
+  return data(c, pages.get(page.id));
 });
 
 // -- Catalog V3 ------------------------------------------------------------------
@@ -345,6 +459,16 @@ app.put('/stores/:hash/v2/orders/:id', async (c) => {
 // -- debug (not a BigCommerce endpoint) -------------------------------------------------
 
 app.get('/_orders', (c) => c.json([...orders.values()]));
+app.get('/_hooks', (c) => c.json([...hooks.values()]));
+app.get('/_pages', (c) => c.json([...pages.values()]));
+// What the storefront would serve for a pushed raw page (BigCommerce sends text/html).
+app.get('/_storefront/:hash/*', (c) => {
+  const hash = c.req.param('hash');
+  const url = c.req.path.slice(`/_storefront/${hash}`.length);
+  const page = [...pages.values()].find((p) => p.store_hash === hash && p.url === url && p.is_visible);
+  if (!page) return c.text('Not found', 404);
+  return c.body(page.body, 200, { 'content-type': 'text/html; charset=utf-8' });
+});
 
 const port = Number(process.env.PORT ?? 8788);
 serve({ fetch: app.fetch, port }, (info) => {

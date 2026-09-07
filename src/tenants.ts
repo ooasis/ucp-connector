@@ -8,6 +8,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Context } from 'hono';
 import { getDb, DATA_DIR } from './db.js';
 import { ecJwkThumbprint, type Jwk } from './rfc9421.js';
 
@@ -36,6 +37,8 @@ export type TenantConfig = {
   bigcommerceAccessToken: string;
   /** Shared secret required on inbound BigCommerce store webhooks. */
   bigcommerceWebhookSecret: string;
+  /** Storefront origin (from /v2/store secure_url); hosts the pushed profile page. */
+  bigcommerceStorefrontUrl: string;
   /** Wix adapter: API base (mock override), site id, API key/OAuth token. */
   wixApiBase: string;
   wixSiteId: string;
@@ -50,6 +53,22 @@ export type Tenant = {
   /** Absolute base URL for this tenant, derived per request (e.g. http://host/dev). */
   baseUrl: string;
 };
+
+/** Public origin of this service: PUBLIC_BASE_URL, else the (forwarded) request host. */
+export function publicOrigin(c: Context): string {
+  const configured = process.env.PUBLIC_BASE_URL;
+  if (configured) return configured.replace(/\/$/, '');
+  const url = new URL(c.req.url);
+  const proto = c.req.header('x-forwarded-proto') ?? url.protocol.replace(':', '');
+  const host = c.req.header('x-forwarded-host') ?? c.req.header('host') ?? url.host;
+  return `${proto}://${host}`;
+}
+
+/** Tenant view for a request, or null when the id is unknown. */
+export function tenantFor(c: Context, id: string): Tenant | null {
+  const config = loadTenantConfig(id);
+  return config ? { id, config, baseUrl: `${publicOrigin(c)}/${id}` } : null;
+}
 
 const DEFAULTS: TenantConfig = {
   enabled: false,
@@ -68,6 +87,7 @@ const DEFAULTS: TenantConfig = {
   bigcommerceStoreHash: '',
   bigcommerceAccessToken: '',
   bigcommerceWebhookSecret: '',
+  bigcommerceStorefrontUrl: '',
   wixApiBase: 'https://www.wixapis.com',
   wixSiteId: '',
   wixAccessToken: '',
@@ -103,16 +123,36 @@ function decrypt(blob: string): string {
 
 // -- tenant load / seed --------------------------------------------------------
 
+/** Credentials stored encrypted (prefix `enc:`); plaintext legacy rows still load. */
+const SECRET_FIELDS = ['bigcommerceAccessToken', 'stripeSecretKey', 'wixAccessToken'] as const;
+const ENC = 'enc:';
+
+function sealSecrets(config: TenantConfig): TenantConfig {
+  const out = { ...config };
+  for (const k of SECRET_FIELDS) {
+    if (out[k] && !out[k].startsWith(ENC)) out[k] = ENC + encrypt(out[k]);
+  }
+  return out;
+}
+
+function openSecrets(config: TenantConfig): TenantConfig {
+  const out = { ...config };
+  for (const k of SECRET_FIELDS) {
+    if (out[k]?.startsWith(ENC)) out[k] = decrypt(out[k].slice(ENC.length));
+  }
+  return out;
+}
+
 export function loadTenantConfig(id: string): TenantConfig | null {
   const row = getDb().prepare('SELECT config FROM tenants WHERE id = ?').get(id) as
     | { config: string }
     | undefined;
   if (!row) return null;
-  return { ...DEFAULTS, ...JSON.parse(row.config) };
+  return openSecrets({ ...DEFAULTS, ...JSON.parse(row.config) });
 }
 
 export function upsertTenant(id: string, config: Partial<TenantConfig>): void {
-  const merged = { ...DEFAULTS, ...(loadTenantConfig(id) ?? {}), ...config };
+  const merged = sealSecrets({ ...DEFAULTS, ...(loadTenantConfig(id) ?? {}), ...config });
   getDb()
     .prepare(
       `INSERT INTO tenants (id, config) VALUES (?, ?)

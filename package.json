@@ -2,6 +2,7 @@
   "name": "ucp-connector",
   "version": "0.1.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "description": "Multi-tenant UCP/ACP protocol connector (shared TS core for BigCommerce/Wix adapters)",
   "type": "module",
   "engines": {
@@ -12,6 +13,7 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx scripts/smoke.ts",
+    "smoke:install": "tsx scripts/install-smoke.ts",
     "mock:bc": "tsx dev/mock-bigcommerce/server.ts",
     "mock:wix": "tsx dev/mock-wix/server.ts"
   },

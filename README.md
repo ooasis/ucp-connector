@@ -112,6 +112,43 @@ Tenant config keys: `adapter: "bigcommerce"`, `bigcommerceApiBase` (real API:
 `bigcommerceAccessToken`, `bigcommerceWebhookSecret`. Conformance against
 `/bigcommerce-dev` passes 75/2 skipped, same as the stub.
 
+## BigCommerce app shell (plan phase 5)
+
+`src/bigcommerce-app.ts` turns the connector into a single-click BigCommerce
+app. Tenants are created by the OAuth install callback (tenant id = store
+hash), no config files involved:
+
+| Route | Role |
+|---|---|
+| `GET /bigcommerce/auth` | Auth Callback URL: exchanges the code, upserts the tenant, registers the two store webhooks, pushes the profile as a Pages API raw page at `/.well-known/ucp`, renders the settings page |
+| `GET /bigcommerce/load` | Load Callback URL: verifies `signed_payload_jwt`, renders the settings page |
+| `GET /bigcommerce/uninstall` | Uninstall Callback URL: disables the tenant, drops the token |
+| `POST /bigcommerce/settings` | Settings form (enable, strict signatures, Stripe keys, simulation secret); blank keeps a secret, checkbox clears it |
+
+Env: `BC_CLIENT_ID` / `BC_CLIENT_SECRET` (draft app credentials), `BC_LOGIN_BASE`
+(default `https://login.bigcommerce.com`), `BC_API_BASE` (default
+`https://api.bigcommerce.com`), `PUBLIC_BASE_URL` (public origin used in
+profile endpoints, webhook destinations and the OAuth `redirect_uri`; defaults
+to the forwarded request host). Store tokens and Stripe secret keys are
+encrypted at rest with the master key.
+
+Against the mock (its OAuth endpoint accepts `mock-client-id` /
+`mock-client-secret`):
+
+```bash
+npm run mock:bc
+BC_CLIENT_ID=mock-client-id BC_CLIENT_SECRET=mock-client-secret \
+BC_LOGIN_BASE=http://localhost:8788 BC_API_BASE=http://localhost:8788 npm run start
+curl "http://localhost:8787/bigcommerce/auth?code=x&scope=store_v2_orders&context=stores/mystore"
+curl http://localhost:8788/_storefront/mystore/.well-known/ucp   # the pushed profile page
+npm run smoke:install   # 15-step install/load/settings/checkout/uninstall/reinstall check
+```
+
+Against a real sandbox: create a draft app in the developer portal with the
+three callback URLs above (https), scopes Products/Orders/Carts/Checkouts/
+Customers read + Content/Webhooks modify, set the env from the app
+credentials, install it from the store's Apps page.
+
 ## Adding a platform adapter
 
 Implement `PlatformAdapter` (`src/adapter.ts`): catalog lookup, shipping
@@ -128,3 +165,4 @@ never talks to a platform directly.
   that in mind if switching to plain `node` ESM.
 - Response signing is not implemented (parity with Magento/Woo, which passed
   conformance without it).
+

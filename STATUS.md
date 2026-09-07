@@ -1,8 +1,52 @@
 # STATUS — ucp-connector (TS protocol core + BigCommerce + Wix adapters)
 
-*Updated 2026-09-02. Stage 2 (protocol core), stage 3 BigCommerce AND stage 3
+*Updated 2026-09-06. Stage 2 (protocol core), stage 3 BigCommerce AND stage 3
 Wix (each against a local mock) verified: conformance GREEN on ALL THREE
-tenants — 75 passed / 2 skipped each (identical bar to Magento).*
+tenants — 75 passed / 2 skipped each (identical bar to Magento). BigCommerce
+plan phase 5 (app shell) built and verified against the mock (below).*
+
+## BigCommerce app shell (plan phase 5, 2026-09-06, uncommitted)
+
+- `src/bigcommerce-app.ts`, mounted at `/bigcommerce`: `GET /auth` (OAuth
+  code -> `POST {BC_LOGIN_BASE}/oauth2/token` -> tenant upsert with id = store
+  hash, `adapter=bigcommerce`, `enabled=true`, random webhook secret kept
+  across reinstalls; `GET /v2/store` fills merchantName/currency/storefront
+  url) then provisions the store: Webhooks V3 registration
+  (`store/order/statusUpdated`, `store/shipment/created` ->
+  `/{hash}/bigcommerce/webhooks` with the `x-webhook-secret` header,
+  idempotent by destination+scope) and the profile pushed as a Pages V3 raw
+  page at `/.well-known/ucp` (create-or-update; re-pushed on every settings
+  save). `GET /load` / `GET /uninstall` verify BigCommerce's
+  `signed_payload_jwt` (HS256 with the client secret, `aud` = client id,
+  `exp`); uninstall disables the tenant and drops the token, keeps records.
+  `POST /settings` (enable, strict signatures, Stripe keys, simulation secret;
+  blank keeps, checkbox clears) is authorized by a 1 h HMAC session token
+  minted by auth/load. Provisioning failures are shown on the page, never
+  fail the install (the dot-prefixed page path is the known phase-1 risk).
+- `tenants.ts`: `publicOrigin(c)` (`PUBLIC_BASE_URL` env, else forwarded
+  host) + `tenantFor(c, id)` shared with index.ts; credentials
+  (`bigcommerceAccessToken`, `stripeSecretKey`, `wixAccessToken`) now sealed
+  at rest with the existing AES-256-GCM master key (`enc:` prefix; plaintext
+  legacy rows still load, seeded configs get sealed on boot).
+- Mock BC gained `POST /oauth2/token`, `GET /v2/store`, Webhooks V3, Pages V3,
+  `/_hooks`, `/_pages`, `/_storefront/{hash}{url}` (serves a pushed page body
+  as text/html, like the real storefront).
+- Verified: typecheck clean; `npm run smoke` green; `npm run smoke:install`
+  **15/15** (install -> encrypted token -> 2 hooks -> page pushed and byte-
+  equal to hosted profile -> load ok / 3 bad JWTs 401 -> settings save,
+  masked secrets, blank keeps, forged token 401 -> checkout + shipment
+  webhook on the new tenant -> uninstall 404s -> reinstall keeps secret, no
+  duplicate hooks/pages); dev connector restarted with the app env,
+  `smokestore` installed via curl, simulation secret set via the form, full
+  conformance vs `SERVER_URL=http://localhost:8787/smokestore` — **75 passed /
+  2 skipped**.
+- Env: `BC_CLIENT_ID`, `BC_CLIENT_SECRET`, `BC_LOGIN_BASE`, `BC_API_BASE`,
+  `PUBLIC_BASE_URL` (see README).
+- Not done (needs a real sandbox store + draft app, user action): Pages API
+  accepting `url: "/.well-known/ucp"` and the content-type it serves;
+  `redirect_uri` must match the draft app's Auth Callback URL exactly;
+  BigCommerce requires https webhook destinations. Billing, partner signup
+  and marketplace review remain per plan.
 
 ## Verify-fix round 1 vs `wix-dev` (2026-09-02)
 
