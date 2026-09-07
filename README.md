@@ -66,6 +66,19 @@ DB and generated master key), `UCP_MASTER_KEY` (32-byte hex; when unset a key
 is generated into `data/master.key`). Signing-key private JWKs are AES-256-GCM
 encrypted at rest under the master key.
 
+## Testing: act as an agent
+
+`scripts/agent-checkout.ts` drives one checkout the way a UCP shopping agent
+would (create session, pick the first shipping option, optional coupon, pay,
+print the order id). Payment uses Stripe's `tok_visa` test token through the
+tenant's Stripe key by default, or the mock handler with `--handler mock` when
+the tenant has a simulation secret:
+
+```bash
+npx tsx scripts/agent-checkout.ts https://<connector>/<tenantId> <productId> --coupon 10OFF
+npx tsx scripts/agent-checkout.ts http://localhost:8787/wix-dev bouquet_roses --handler mock
+```
+
 ## Conformance
 
 Run the suite (`../conformance`) against a live server:
