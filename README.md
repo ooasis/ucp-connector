@@ -188,6 +188,8 @@ npx wrangler secret put WIX_APP_SECRET
 npx wrangler secret put WIX_APP_PUBLIC_KEY < wix-public-key.pem
 npx wrangler secret put BC_CLIENT_ID
 npx wrangler secret put BC_CLIENT_SECRET
+npx wrangler secret put SUPPORT_EMAIL         # shown on the dashboard footer and legal pages
+npx wrangler secret put OPERATOR_NAME         # optional, defaults to ooasis
 ```
 
 Then point the Wix / BigCommerce app callback URLs at the deployed origin
