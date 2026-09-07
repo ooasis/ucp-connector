@@ -59,9 +59,23 @@ start:env` (new `.env` support) behind an ngrok tunnel.
   hit `/wix/webhooks` -> UCP order shows a `shipped` event within 20 s.
   Plan phase 4 verify (paid order + fulfillment event) is met on real Wix,
   with the mock handler standing in for Stripe.
-- Still open: spike S1 (`.well-known` fronting on a published site), Stripe
-  google_pay on a real Stripe test account, conformance suite against the
-  real site (needs the flower-shop fixtures created there).
+- **Stripe google_pay on a real Stripe test account (2026-09-07)**: merchant
+  pasted an `sk_test_` key on the dashboard page (stored encrypted); profile
+  then advertised `com.google.pay/google_pay`; complete with a Google Pay
+  tokenization payload wrapping Stripe's `tok_visa` -> PaymentMethod ->
+  confirmed PaymentIntent `pi_3UD4PQ…` -> Wix order **#10003** PAID with the
+  Stripe id recorded via Add Payments (`Stripe (UCP agent)`, APPROVED).
+  Observation: Wix itself attaches a second `PENDING` payment record (no
+  method) to every order created from a checkout, also on the mock-handler
+  orders — cosmetic, `paymentStatus` is PAID. Follow-up: update that pending
+  record (Update Payment Status) instead of adding a new one.
+- Still open: spike S1 (`.well-known` fronting on a published site);
+  conformance suite against the real site — needs the flower-shop fixtures
+  there AND more app scopes: the app currently has
+  `DC-STORES.READ-PRODUCTS`, `DC-COUPONS.MANAGE-COUPONS`, `ECOM.MANAGE-ADMIN`,
+  `DC-ECOM-MEGA.MANAGE-ECOM`, `APP-INSTANCE-READ-BASIC-INFO` — no Contacts
+  scope, so known-customer address injection returns "unknown buyer" on the
+  real site (Contacts query 403 -> null) until `Read Contacts` is granted.
 - App lifecycle event names pinned from a live remove + reinstall
   (2026-09-07): exactly `AppRemoved` and `AppInstalled` (no `wix.` prefix);
   the same instanceId is reused on reinstall and the tenant is re-enabled with
