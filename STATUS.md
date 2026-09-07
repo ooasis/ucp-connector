@@ -1,5 +1,12 @@
 # STATUS — ucp-connector (TS protocol core + BigCommerce + Wix adapters)
 
+*2026-09-07: UCP Agent 1.0 PUBLISHED on the Wix App Market (self-hosted app,
+connector on Cloudflare at https://ucp-connector.videoss.workers.dev, tag
+v1.0.0). Listing pack + images in ucp/marketing/wix. Next: watch first installs
+(wrangler tail), rerun the full conformance suite against the live site now that
+the 5-orders/hour cap is lifted, custom domain for the connector, S1 fronting
+test on a real merchant domain, BigCommerce blocked on a sandbox store.*
+
 *Updated 2026-09-06. Stage 2 (protocol core), stage 3 BigCommerce AND stage 3
 Wix (each against a local mock) verified: conformance GREEN on ALL THREE
 tenants — 75 passed / 2 skipped each (identical bar to Magento). BigCommerce
