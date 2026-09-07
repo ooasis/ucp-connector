@@ -363,7 +363,15 @@ app.post('/ecom/v1/checkouts/:id/create-order', (c) => {
     billingInfo: checkout.billingInfo,
     shippingInfo: checkout.shippingInfo,
     lineItems: checkout.lineItems,
-    payments: [] as any[],
+    // Real Wix attaches a PENDING gateway placeholder payment when total > 0.
+    payments: [
+      {
+        id: randomUUID(),
+        regularPaymentDetails: { paymentOrderId: randomUUID(), offlinePayment: false, status: 'PENDING' },
+        amount: { amount: checkout.priceSummary.total.amount },
+        status: 'PENDING',
+      },
+    ] as any[],
   };
   orders.set(order.id, order);
   checkout.completed = true;
@@ -389,7 +397,9 @@ app.post('/ecom/v1/payments/orders/:id/add-payment', async (c) => {
   // paymentStatus recalculates async — hold PENDING briefly, then settle.
   order.paymentStatus = 'PENDING';
   setTimeout(() => {
-    const paid = order.payments.reduce((sum: number, p: any) => sum + Number(p.amount?.amount ?? 0), 0);
+    const paid = order.payments
+      .filter((p: any) => (p.regularPaymentDetails?.status ?? p.status) === 'APPROVED')
+      .reduce((sum: number, p: any) => sum + Number(p.amount?.amount ?? 0), 0);
     order.paymentStatus = paid >= Number(order.priceSummary.total.amount) ? 'PAID' : 'PARTIALLY_PAID';
   }, 250);
   return c.json({
@@ -398,6 +408,23 @@ app.post('/ecom/v1/payments/orders/:id/add-payment', async (c) => {
       payments: order.payments,
     },
   });
+});
+
+// Order Transactions: list + update payment status
+app.get('/ecom/v1/payments/orders/:id', (c) => {
+  const order = orders.get(c.req.param('id'));
+  if (!order) return wixError(c, 404, 'Order not found', 'NOT_FOUND');
+  return c.json({ orderTransactions: { orderId: order.id, payments: order.payments } });
+});
+
+app.post('/ecom/v1/payments/:pid/orders/:id/update-payment-transaction-status', async (c) => {
+  const order = orders.get(c.req.param('id'));
+  const payment = order?.payments.find((p: any) => p.id === c.req.param('pid'));
+  if (!order || !payment) return wixError(c, 404, 'Payment not found', 'NOT_FOUND');
+  const status = String((await c.req.json().catch(() => ({}))).status ?? '');
+  payment.status = status;
+  if (payment.regularPaymentDetails) payment.regularPaymentDetails.status = status;
+  return c.json({ orderTransactions: { orderId: order.id, payments: order.payments } });
 });
 
 app.get('/ecom/v1/orders/:id', (c) => {

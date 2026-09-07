@@ -214,6 +214,18 @@ try {
   assert.equal(done.status, 'completed');
   ok(`checkout on the instance with a client_credentials token: order ${done.order.id}`);
 
+  // Wix's own PENDING gateway placeholder is voided in the background after Add Payments.
+  let statuses: string[] = [];
+  for (let i = 0; i < 10 && !statuses.includes('VOIDED'); i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    const wo = ((await (fetch(`${MOCK}/_orders`).then((r) => (r.json() as Promise<any>)))) as any[])
+      .reverse()
+      .find((o) => o.buyerInfo?.email === 'smoke@example.com');
+    statuses = (wo?.payments ?? []).map((p: any) => p.regularPaymentDetails?.status ?? p.status);
+  }
+  assert.deepEqual([...statuses].sort(), ['APPROVED', 'VOIDED'], `payments: ${statuses}`);
+  ok('our payment APPROVED, Wix gateway placeholder VOIDED (one live payment line)');
+
   const wixOrders = (await fetch(`${MOCK}/_orders`).then((r) => (r.json() as Promise<any>))) as any[];
   // Mock state outlives smoke runs: take the newest PAID order for this buyer.
   // (paymentStatus settles asynchronously on Wix, so do not filter on it.)

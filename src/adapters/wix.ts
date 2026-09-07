@@ -417,7 +417,34 @@ export class WixAdapter implements PlatformAdapter {
 
     // paymentStatus recalculates asynchronously on Wix's side; the Stripe
     // charge is captured and authoritative, so we do not wait for it.
+    // Wix also attaches its own PENDING gateway placeholder to every order
+    // created from a checkout; void it in the background so the merchant
+    // sees one payment line (ours, with the Stripe id).
+    void voidGatewayPlaceholder(tenant, String(orderId));
     return String(orderId);
+  }
+}
+
+/** Void the PENDING gateway placeholder Wix creates on create-order (best effort). */
+async function voidGatewayPlaceholder(tenant: Tenant, orderId: string): Promise<void> {
+  try {
+    const [, t] = await wix(tenant, 'GET', `/ecom/v1/payments/orders/${orderId}`);
+    const placeholder = (t?.orderTransactions?.payments ?? []).find(
+      (p: any) =>
+        p.regularPaymentDetails?.status === 'PENDING' &&
+        p.regularPaymentDetails?.paymentOrderId &&
+        !p.regularPaymentDetails?.providerTransactionId,
+    );
+    if (!placeholder) return;
+    const [s, r] = await wix(
+      tenant,
+      'POST',
+      `/ecom/v1/payments/${placeholder.id}/orders/${orderId}/update-payment-transaction-status`,
+      { status: 'VOIDED' },
+    );
+    if (s >= 400) console.warn(`wix: void placeholder payment on ${orderId} failed (HTTP ${s}${wixMessage(r)})`);
+  } catch (e: any) {
+    console.warn(`wix: void placeholder payment on ${orderId} failed: ${e?.message ?? e}`);
   }
 }
 

@@ -5,6 +5,21 @@ Wix (each against a local mock) verified: conformance GREEN on ALL THREE
 tenants — 75 passed / 2 skipped each (identical bar to Magento). BigCommerce
 AND Wix plan phase 5 (app shells) built and verified against the mocks (below).*
 
+## Wix — single payment line per order (2026-09-07, uncommitted)
+
+- Wix attaches a PENDING gateway placeholder payment (`regularPaymentDetails.
+  paymentOrderId`, no `providerTransactionId`) to every order created from a
+  checkout with total > 0; our Add Payments record sat next to it. After Add
+  Payments the adapter now voids that placeholder in the background
+  (`GET /ecom/v1/payments/orders/{id}` -> `POST /ecom/v1/payments/{paymentId}/
+  orders/{orderId}/update-payment-transaction-status {status: VOIDED}`, best
+  effort, logged on failure) — not awaited, so completion latency is unchanged.
+  Verified on real order #10003: placeholder VOIDED, our Stripe payment
+  APPROVED, `paymentStatus` stays PAID. Mock now creates the placeholder and
+  implements both endpoints; `smoke:wix-install` asserts APPROVED + VOIDED
+  (14/14). A fresh live completion could not be run: the 5-orders/hour cap
+  for unpublished apps was still exhausted.
+
 ## Wix spike S1 — `.well-known` fronting (2026-09-07, uncommitted)
 
 - `infra/wellknown-worker/`: Cloudflare Worker (wrangler 4, own package.json)
