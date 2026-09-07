@@ -215,8 +215,10 @@ Wix caps unpublished apps at 5 order creations per hour per site, so the full
 suite (about 20 completions) only passes end to end once the app is listed.
 
 The merchant-domain `/.well-known/ucp` is not solved by the app: Wix cannot
-serve root files, so the dashboard tells the merchant to front the site
-(Cloudflare Worker or proxy rule) and reports whether that is live.
+serve root files. `infra/wellknown-worker/` is a Cloudflare Worker, routed only
+to that path on the merchant's proxied domain, that serves the tenant's hosted
+profile there (one deployment per merchant, see its README). The dashboard
+tells the merchant to set it up and reports whether the URL is live.
 
 ## License
 

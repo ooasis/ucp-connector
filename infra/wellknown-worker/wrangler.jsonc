@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // One deployment per merchant domain: set `name` (e.g. ucp-wellknown-flowershop), `routes` and `UCP_PROFILE_URL`.
+  "name": "ucp-wellknown-merchant",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-15",
+  "vars": {
+    // The hosted profile for this merchant's tenant on the connector.
+    "UCP_PROFILE_URL": "https://ucp.example.com/<tenantId>/.well-known/ucp"
+  },
+  // Runs ONLY on the profile path; every other request never reaches the Worker.
+  "routes": [
+    { "pattern": "shop.example.com/.well-known/ucp", "zone_name": "example.com" }
+  ],
+  "observability": { "enabled": true }
+}

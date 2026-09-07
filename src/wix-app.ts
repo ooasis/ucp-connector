@@ -147,7 +147,7 @@ async function page(c: Context, tenant: Tenant, notice: string) {
     ['Site', tenant.config.wixSiteUrl || '(unpublished)'],
     [
       'Storefront profile',
-      `${tenant.config.wixSiteUrl || 'https://<your-site>'}/.well-known/ucp → proxy to ${tenant.baseUrl}/.well-known/ucp — status: ${await wellKnownStatus(tenant)}`,
+      `${tenant.config.wixSiteUrl || 'https://<your-site>'}/.well-known/ucp → proxy to ${tenant.baseUrl}/.well-known/ucp — status: ${await wellKnownStatus(tenant)} (Cloudflare Worker: see infra/wellknown-worker)`,
     ],
     ['Webhook sink', `${tenant.baseUrl.replace(/\/[^/]+$/, '')}/wix/webhooks (configured in the app dashboard)`],
   ];

@@ -5,6 +5,23 @@ Wix (each against a local mock) verified: conformance GREEN on ALL THREE
 tenants — 75 passed / 2 skipped each (identical bar to Magento). BigCommerce
 AND Wix plan phase 5 (app shells) built and verified against the mocks (below).*
 
+## Wix spike S1 — `.well-known` fronting (2026-09-07, uncommitted)
+
+- `infra/wellknown-worker/`: Cloudflare Worker (wrangler 4, own package.json)
+  routed to `<merchant-domain>/.well-known/ucp` only; fetches
+  `UCP_PROFILE_URL` (the tenant's hosted profile, 60 s edge cache) and serves
+  it as `application/json` with CORS; HEAD ok, other methods 405, upstream
+  404 -> 404, upstream down -> 502. Everything else on the domain never hits
+  the Worker (route pattern). README covers the merchant prerequisites: custom
+  domain on Cloudflare DNS, Wix connected by *pointing*, Wix records proxied
+  (orange cloud), SSL Full. A free `*.wixsite.com` address cannot be fronted.
+- Verified locally with `wrangler dev` against the running connector: GET
+  returns the live tenant's profile (endpoint = tunnel URL), HEAD 200, POST
+  405, unknown tenant -> 404 JSON. NOT verified on a real merchant domain —
+  needs a custom domain on Cloudflare in front of the dev site (user action);
+  the dashboard "Storefront profile" row will report `ok` once it is.
+- Dashboard row now points at `infra/wellknown-worker`.
+
 ## Wix — live conformance + fixtures (2026-09-07, uncommitted)
 
 - `scripts/wix-seed.ts <tenantId>` seeds the flower-shop fixtures on a real
